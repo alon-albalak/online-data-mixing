@@ -677,7 +677,8 @@ class NeoXArgs(*BASE_CLASSES):
                 if self.num_gpus is not None and self.num_gpus > 0:
                     global_num_gpus = self.num_gpus * len(resources)
             else:
-                global_num_gpus = torch.cuda.device_count()
+                # if world size is set, use it to determine the number of gpus
+                global_num_gpus = self.world_size if self.world_size and self.world_size > 0 else torch.cuda.device_count()
             self.update_value("global_num_gpus", global_num_gpus)
 
         logging.info(

@@ -1,0 +1,51 @@
+{
+  # model settings, 162,322,944 parameters
+  "num-layers": 12,
+  "hidden-size": 768,
+  "num-attention-heads": 12,
+  "seq-length": 1024,
+  "max-position-embeddings": 1024,
+  "pos-emb": "rotary",
+  "rotary-pct": 0.25,
+  "no-weight-tying": true,
+  "gpt-j-residual": true,
+  "output-layer-parallelism": "column",
+  
+  "attention-config": [[["flash"], 12]],
+
+  "scaled-upper-triang-masked-softmax-fusion": true,
+  "bias-gelu-fusion": true,
+
+  # batch size (training on 1 gpu, takes up 37.5Gb of memory)
+  "train_batch_size": 480,
+  "train_micro_batch_size_per_gpu": 60,
+  "gradient_accumulation_steps": 4,
+  "data-impl": "mmap",
+  "num_workers": 1,
+
+  # train settings
+  "train-iters": 100000,
+  "lr-decay-iters": 100000,
+  "distributed-backend": "nccl",
+  "lr-decay-style": "cosine",
+  "warmup": 0.01,
+  "checkpoint-factor": 1000,
+  "eval-interval": 1000,
+  "eval-iters": 10,
+
+  "log-interval": 10,
+  "steps_per_print": 10,
+  "wall_clock_breakdown": true,
+
+  # tokenizer settings
+  "tokenizer-type": "HFTokenizer",
+  "vocab-file": "/share/edc/home/alon_albalak/tokenizers/20B_tokenizer.json",
+
+  # wandb settings
+  "use_wandb": true,
+  "wandb_project": "neox",
+  "wandb_group": "160m",
+
+  "include": "localhost:0,1",
+  "world_size": 2,
+}

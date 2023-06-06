@@ -1,0 +1,6 @@
+{
+  # "domain-weight": "original", # original, doremi, mab
+  "train-data-paths": ["/share/edc/home/alon_albalak/data/pile/preprocessed/train/"],
+  "valid-data-paths": ["/share/edc/home/alon_albalak/data/pile/preprocessed/validation"],
+  "test-data-paths": ["/share/edc/home/alon_albalak/data/pile/preprocessed/test"],
+}

@@ -1,0 +1,5 @@
+{
+  # parallelism settings
+  "pipe-parallel-size": 1,
+  "model-parallel-size": 1,
+}

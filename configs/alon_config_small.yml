@@ -20,10 +20,42 @@
   "scaled-upper-triang-masked-softmax-fusion": true,
   "bias-gelu-fusion": true,
 
+  # batch size (training on 1 gpu, takes up 37.5Gb of memory)
+  "train_batch_size": 480,
+  "train_micro_batch_size_per_gpu": 60,
+  "gradient_accumulation_steps": 8,
+  "data-impl": "mmap",
+  "num_workers": 1,
+
+  # train settings
+  "train-iters": 100000,
+  "lr-decay-iters": 100000,
+  "distributed-backend": "nccl",
+  "lr-decay-style": "cosine",
+  "warmup": 0.01,
+  "checkpoint-factor": 1000,
+  "eval-interval": 1000,
+  "eval-iters": 10,
+
+  "log-interval": 10,
+  "steps_per_print": 10,
+  "wall_clock_breakdown": true,
+
+  # tokenizer settings
+  "tokenizer-type": "GPT2BPETokenizer",
+  "vocab-file": "data/gpt2-vocab.json",
+  "merge-file": "data/gpt2-merges.txt",
+
+  # wandb settings
+  "use_wandb": true,
+  "wandb_project": "neox",
+  "wandb_group": "alon_config_small",
+
   # init methods
   "init_method": "small_init",
   "output_layer_init_method": "wang_init",
 
+  # optimizer settings
   "optimizer": {
     "type": "Adam",
     "params": {
@@ -44,13 +76,6 @@
     "contiguous_gradients": true,
     "cpu_offload": false
   },
-
-  # batch size (training on 1 gpu, takes up 37.5Gb of memory)
-  "train_batch_size": 480,
-  "train_micro_batch_size_per_gpu": 60,
-  "gradient_accumulation_steps": 8,
-  "data-impl": "mmap",
-  "num_workers": 1,
 
   # activation checkpointing
   "checkpoint-activations": true,
@@ -75,30 +100,9 @@
     "min_loss_scale": 1
   },
 
-  "train-iters": 100000,
-  "lr-decay-iters": 100000,
-  "distributed-backend": "nccl",
-  "lr-decay-style": "cosine",
-  "warmup": 0.01,
-  "checkpoint-factor": 1000,
-  "eval-interval": 1000,
-  "eval-iters": 10,
-
-  "log-interval": 10,
-  "steps_per_print": 10,
-  "wall_clock_breakdown": true,
-
   "train-data-paths": ["data/openwebtext-processed_text_document"],
   "valid-data-paths": ["data/openwebtext-processed_text_document"],
   "test-data-paths": ["data/openwebtext-processed_text_document"],
-
-  "tokenizer-type": "GPT2BPETokenizer",
-  "vocab-file": "data/gpt2-vocab.json",
-  "merge-file": "data/gpt2-merges.txt",
-
-  "use_wandb": true,
-  "wandb_project": "neox",
-  "wandb_group": "alon_config_small",
 
   # to use a single GPU
   # "include": "localhost:7",

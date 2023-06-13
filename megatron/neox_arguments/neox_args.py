@@ -977,6 +977,25 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     Whether to calculate character level perplexity as well as token level perplexity. (may incur a time cost)
     """
 
+    use_named_train_datasets: bool = False
+    """
+    Whether to track train datasets by name. Currently assumes that dataset name exists in the filename and can be collected by file_path.split("/")[-2].
+    """
+
+    use_named_eval_datasets: bool = False
+    """
+    Whether to track eval datasets by name. Currently assumes that dataset name exists in the filename and can be collected by file_path.split("/")[-2].
+    """
+
+    max_validation_samples_per_dataset: int = None
+    """
+    Maximum number of validation samples to use. Useful for large datasets like The Pile.
+    """
+    max_test_samples_per_dataset: int = None
+    """
+    Maximum number of test samples to use. Useful for large datasets like The Pile.
+    """
+
 
 @dataclass
 class NeoXArgsTextgen(NeoXArgsTemplate):

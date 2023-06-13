@@ -60,6 +60,7 @@ def build_the_dataset(
     seed,
     skip_warmup,
     build_index_mappings=True,
+    max_samples=None
 ):
     """Build train/valid/test datasets."""
 
@@ -79,6 +80,7 @@ def build_the_dataset(
         seq_length,
         seed,
         build_index_mappings=build_index_mappings,
+        max_samples=max_samples
     )
     return dataset
 
@@ -248,6 +250,74 @@ def build_weighted_datasets(
             )
     return train_datasets, valid_datasets, test_datasets
 
+def build_named_datasets(
+    neox_args,
+    train_num_samples,
+    valid_num_samples,
+    test_num_samples,
+    build_index_mappings=True,
+):
+    # build individual datasets as dictionaries
+    train_datasets, valid_datasets, test_datasets = {}, {}, {}
+    num_validation_samples, num_test_samples = {}, {}
+    for i, (train_path, valid_path, test_path) in enumerate(
+        zip_longest(
+            neox_args.train_data_paths,
+            neox_args.valid_data_paths,
+            neox_args.test_data_paths,
+        )
+    ):
+        if train_path:
+            name = train_path.split("/")[-2]
+            train_datasets[name] = build_the_dataset(
+                    data_prefix=train_path,
+                    name=f"train_{name}",
+                    data_impl=neox_args.data_impl,
+                    num_samples=train_num_samples[i],
+                    seq_length=neox_args.seq_length,
+                    seed=neox_args.seed,
+                    skip_warmup=(not neox_args.mmap_warmup),
+                    build_index_mappings=build_index_mappings,
+                )
+
+        if valid_path:
+            name = valid_path.split("/")[-2]
+            valid_datasets[name] = build_the_dataset(
+                    data_prefix=valid_path,
+                    name=f"valid_{name}",
+                    data_impl=neox_args.data_impl,
+                    num_samples=valid_num_samples[i],
+                    seq_length=neox_args.seq_length,
+                    seed=neox_args.seed,
+                    skip_warmup=(not neox_args.mmap_warmup),
+                    build_index_mappings=build_index_mappings,
+                    max_samples=neox_args.max_validation_samples_per_dataset
+                )
+            num_validation_samples[name] = len(valid_datasets[name])
+
+        if test_path:
+            name = test_path.split("/")[-2]
+            test_datasets[name] = build_the_dataset(
+                    data_prefix=test_path,
+                    name=f"test_{name}",
+                    data_impl=neox_args.data_impl,
+                    num_samples=test_num_samples[i],
+                    seq_length=neox_args.seq_length,
+                    seed=neox_args.seed,
+                    skip_warmup=(not neox_args.mmap_warmup),
+                    build_index_mappings=build_index_mappings,
+                    max_samples=neox_args.max_test_samples_per_dataset
+                )
+            num_test_samples[name] = len(test_datasets[name])
+    
+    # calculate percent of validation and test samples per dataset
+    total_validation_samples = sum(num_validation_samples.values())
+    neox_args.validation_dataset_weights = {name: num_validation_samples[name] / total_validation_samples for name in num_validation_samples}
+    total_test_samples = sum(num_test_samples.values())
+    neox_args.test_dataset_weights = {name: num_test_samples[name] / total_test_samples for name in num_test_samples}
+
+    return train_datasets, valid_datasets, test_datasets
+
 
 def weights_by_num_docs(l: list, alpha=0.3):
     """
@@ -318,28 +388,54 @@ def build_train_valid_test_data_iterators(neox_args):
         if neox_args.train_data_paths:
             # when individual train / valid / test data paths are provided
             # normalize weight values and get num samples for each dataset
-            train_weights, train_num_samples = get_normalized_weights_and_num_samples(
-                neox_args.train_data_weights, train_val_test_num_samples[0]
-            )
-            valid_weights, valid_num_samples = get_normalized_weights_and_num_samples(
-                neox_args.valid_data_weights, train_val_test_num_samples[1]
-            )
-            test_weights, test_num_samples = get_normalized_weights_and_num_samples(
-                neox_args.test_data_weights, train_val_test_num_samples[2]
-            )
 
-            # build individual datasets
-            train_datasets, valid_datasets, test_datasets = build_weighted_datasets(
-                neox_args,
-                train_num_samples,
-                valid_num_samples,
-                test_num_samples,
-                train_weights,
-                valid_weights,
-                test_weights,
-                build_index_mappings=not neox_args.weight_by_num_documents,
-            )
+            # if using named datasets, ignore setting train_num_samples and train_weights
+            if neox_args.use_named_train_datasets:
+                train_num_samples = [None for _ in neox_args.train_data_paths]
+            else:
+                train_weights, train_num_samples = get_normalized_weights_and_num_samples(
+                    neox_args.train_data_weights, train_val_test_num_samples[0]
+                )
+            if neox_args.use_named_eval_datasets:
+                valid_num_samples = [None for _ in neox_args.valid_data_paths]
+                test_num_samples = [None for _ in neox_args.test_data_paths]
+            else:
+                valid_weights, valid_num_samples = get_normalized_weights_and_num_samples(
+                    neox_args.valid_data_weights, train_val_test_num_samples[1]
+                )
+                test_weights, test_num_samples = get_normalized_weights_and_num_samples(
+                    neox_args.test_data_weights, train_val_test_num_samples[2]
+                )
 
+            # if using named datasets, generate all named datasets and combine later if needed
+            # will also build index mappings for individual datasets
+            if neox_args.use_named_train_datasets or neox_args.use_named_eval_datasets:
+                train_datasets, valid_datasets, test_datasets = build_named_datasets(
+                    neox_args,
+                    train_num_samples,
+                    valid_num_samples,
+                    test_num_samples,
+                    build_index_mappings=True,
+                )
+                # combine named datasets if needed
+                if not neox_args.use_named_train_datasets:
+                    train_datasets = list(train_datasets.values())
+                if not neox_args.use_named_eval_datasets:
+                    valid_datasets = [valid_datasets.values()]
+                    test_datasets = [test_datasets.values()]
+            else:
+                train_datasets, valid_datasets, test_datasets = build_weighted_datasets(
+                    neox_args,
+                    train_num_samples,
+                    valid_num_samples,
+                    test_num_samples,
+                    train_weights,
+                    valid_weights,
+                    test_weights,
+                    build_index_mappings=not neox_args.weight_by_num_documents,
+                )
+
+            # skipped if using named datasets
             if neox_args.weight_by_num_documents:
 
                 # gets the number of documents in each datapath
@@ -388,12 +484,16 @@ def build_train_valid_test_data_iterators(neox_args):
                     test_weights,
                 )
 
+
+            # Create BlendableDatasets if not using named datasets
             if train_datasets:
-                train_ds = BlendableDataset(train_datasets, train_weights)
-            if valid_datasets:
-                valid_ds = BlendableDataset(valid_datasets, valid_weights)
-            if test_datasets:
-                test_ds = BlendableDataset(test_datasets, test_weights)
+                if not neox_args.use_named_train_datasets:
+                    train_ds = BlendableDataset(train_datasets, train_weights)
+            if not neox_args.use_named_eval_datasets:
+                if valid_datasets:
+                    valid_ds = BlendableDataset(valid_datasets, valid_weights)
+                if test_datasets:
+                    test_ds = BlendableDataset(test_datasets, test_weights)
         else:
             # when just data_path is provided
             # split dataset into train, valid and test from data_path
@@ -409,9 +509,17 @@ def build_train_valid_test_data_iterators(neox_args):
             )
 
         # Build dataloders.
-        train_dataloader = make_data_loader(train_ds, neox_args=neox_args)
-        valid_dataloader = make_data_loader(valid_ds, neox_args=neox_args)
-        test_dataloader = make_data_loader(test_ds, neox_args=neox_args)
+        if neox_args.use_named_train_datasets:
+            train_dataloader = {name: make_data_loader(ds, neox_args=neox_args) for name, ds in train_datasets.items()}
+        else:
+            train_dataloader = make_data_loader(train_ds, neox_args=neox_args)
+
+        if neox_args.use_named_eval_datasets:
+            valid_dataloader = {name: make_data_loader(ds, neox_args=neox_args) for name, ds in valid_datasets.items()}
+            test_dataloader = {name: make_data_loader(ds, neox_args=neox_args) for name, ds in test_datasets.items()}
+        else:
+            valid_dataloader = make_data_loader(valid_ds, neox_args=neox_args)
+            test_dataloader = make_data_loader(test_ds, neox_args=neox_args)
 
         # Flags to know if we need to do training/validation/testing.
         do_train = train_dataloader is not None and neox_args.train_iters > 0
@@ -438,44 +546,73 @@ def build_train_valid_test_data_iterators(neox_args):
     neox_args.do_test = flags[2].item()
 
     # Shift the start iterations.
-    if train_dataloader is not None:
-        train_dataloader.batch_sampler.start_iter = (
-            neox_args.iteration * neox_args.gradient_accumulation_steps
-        ) % len(train_dataloader)
-        print_rank_0(
-            "setting training data start iteration to {}".format(
-                train_dataloader.batch_sampler.start_iter
+    # TODO:
+    #   This part is broken for named train datasets, because we only have 1 neox_args.iteration
+    #   To implement this, we need to have neox_args.iteration be a dict, and have a separate
+    #   iteration for each dataset
+    if not neox_args.use_named_train_datasets:
+        if train_dataloader is not None:
+            train_dataloader.batch_sampler.start_iter = (
+                neox_args.iteration * neox_args.gradient_accumulation_steps
+            ) % len(train_dataloader)
+            print_rank_0(
+                "setting training data start iteration to {}".format(
+                    train_dataloader.batch_sampler.start_iter
+                )
             )
-        )
-    if valid_dataloader is not None:
-        start_iter_val = (
-            (neox_args.iteration * neox_args.gradient_accumulation_steps)
-            // neox_args.eval_interval
-        ) * neox_args.eval_iters
-        valid_dataloader.batch_sampler.start_iter = start_iter_val % len(
-            valid_dataloader
-        )
-        print_rank_0(
-            "setting validation data start iteration to {}".format(
-                valid_dataloader.batch_sampler.start_iter
-            )
-        )
-
-    # Build iterators.
-    if train_dataloader is not None:
-        train_data_iterator = iter(train_dataloader)
-    else:
-        train_data_iterator = None
 
     if valid_dataloader is not None:
-        valid_data_iterator = iter(valid_dataloader)
-    else:
-        valid_data_iterator = None
+        if isinstance(valid_dataloader, torch.utils.data.DataLoader):
+            start_iter_val = (
+                (neox_args.iteration * neox_args.gradient_accumulation_steps)
+                // neox_args.eval_interval
+            ) * neox_args.eval_iters
+            valid_dataloader.batch_sampler.start_iter = start_iter_val % len(
+                valid_dataloader
+            )
+            print_rank_0(
+                "setting validation data start iteration to {}".format(
+                    valid_dataloader.batch_sampler.start_iter
+                )
+            )
+        elif isinstance(valid_dataloader, dict):
+            for name, dataloader in valid_dataloader.items():
+                assert(isinstance(dataloader, torch.utils.data.DataLoader)), "valid_dataloader must be a dict of dataloaders"
+                start_iter_val = (
+                    (neox_args.iteration * neox_args.gradient_accumulation_steps)
+                    // neox_args.eval_interval
+                ) * neox_args.eval_iters
+                if start_iter_val > 0:
+                    print_rank_0(f"WARNING: tried setting start_iter_val to {start_iter_val} but this is not enforced for named datasets. Named datasets always start from 0.")
+                dataloader.batch_sampler.start_iter = 0
+                print_rank_0(
+                    "setting validation data start iteration for {} to {}/{} samples".format(
+                        name, dataloader.batch_sampler.start_iter, len(dataloader.dataset)
+                    )
+                )
 
-    if test_dataloader is not None:
-        test_data_iterator = iter(test_dataloader)
+    # Build iterators, if needed
+    if not neox_args.use_named_train_datasets:
+        if train_dataloader is not None:
+            train_data_iterator = iter(train_dataloader)
+        else:
+            train_data_iterator = None
     else:
-        test_data_iterator = None
+        train_data_iterator = train_dataloader
+        
+    if not neox_args.use_named_eval_datasets:
+        if valid_dataloader is not None:
+            valid_data_iterator = iter(valid_dataloader)
+        else:
+            valid_data_iterator = None
+
+        if test_dataloader is not None:
+            test_data_iterator = iter(test_dataloader)
+        else:
+            test_data_iterator = None
+    else:
+        valid_data_iterator = valid_dataloader
+        test_data_iterator = test_dataloader
 
     return train_data_iterator, valid_data_iterator, test_data_iterator
 

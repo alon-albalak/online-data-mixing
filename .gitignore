@@ -143,6 +143,7 @@ checkpoints/
 .vscode/
 *.pt
 *.ckpt
+outputs/*
 
 #test logs
 test_checkpoint/

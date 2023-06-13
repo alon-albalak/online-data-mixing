@@ -57,6 +57,7 @@ from megatron.utils import (
 from megatron.model.gpt2_model import cross_entropy
 from eval_tasks import run_eval_harness
 
+from random import choices
 
 def pretrain(neox_args):
     """Main training program.
@@ -125,16 +126,28 @@ def pretrain(neox_args):
 
     if neox_args.do_valid:
         prefix = "the end of training for val data"
-        evaluate_and_print_results(
-            neox_args=neox_args,
-            prefix=prefix,
-            forward_step_func=forward_step,
-            data_iterator=valid_data_iterator,
-            model=model,
-            iteration=iteration,
-            verbose=False,
-            timers=timers,
-        )
+        if neox_args.use_named_eval_datasets:
+            evaluate_named_datasets_and_print_results(
+                neox_args=neox_args,
+                prefix=prefix,
+                forward_step_func=forward_step,
+                data_iterators=valid_data_iterator,
+                model=model,
+                iteration=iteration,
+                verbose=False,
+                timers=timers,
+            )
+        else:
+            evaluate_and_print_results(
+                neox_args=neox_args,
+                prefix=prefix,
+                forward_step_func=forward_step,
+                data_iterator=valid_data_iterator,
+                model=model,
+                iteration=iteration,
+                verbose=False,
+                timers=timers,
+            )
 
     if neox_args.save and iteration != 0:
         save_checkpoint(
@@ -148,17 +161,30 @@ def pretrain(neox_args):
     if neox_args.do_test:
         # Run on test data.
         prefix = "the end of training for test data"
-        evaluate_and_print_results(
-            neox_args=neox_args,
-            prefix=prefix,
-            forward_step_func=forward_step,
-            data_iterator=test_data_iterator,
-            model=model,
-            iteration=iteration,
-            verbose=True,
-            timers=timers,
-            chart_name="test",
-        )
+        if neox_args.use_named_eval_datasets:
+            evaluate_named_datasets_and_print_results(
+                neox_args=neox_args,
+                prefix=prefix,
+                forward_step_func=forward_step,
+                data_iterators=test_data_iterator,
+                model=model,
+                iteration=iteration,
+                verbose=True,
+                timers=timers,
+                chart_name="test",
+            )
+        else:
+            evaluate_and_print_results(
+                neox_args=neox_args,
+                prefix=prefix,
+                forward_step_func=forward_step,
+                data_iterator=test_data_iterator,
+                model=model,
+                iteration=iteration,
+                verbose=True,
+                timers=timers,
+                chart_name="test",
+            )
 
 
 def _get_batch(neox_args, tokenizer, keys, data, datatype):
@@ -568,6 +594,14 @@ def train(
     # Iterations.
     iteration = neox_args.iteration
 
+    # if using named train datasets, prepare dataloaders, dataiterators and dicts to track iterations and epochs
+    if neox_args.use_named_train_datasets:
+        neox_args.dataset_iterations = {name: 0 for name in train_data_iterator.keys()}
+        train_dataloaders = {name: dataloader for name, dataloader in train_data_iterator.items()}
+        train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
+        neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
+        dataset_names = list(train_data_iterator.keys())
+
     timers("interval time").start()
     report_memory_flag = True
 
@@ -577,15 +611,64 @@ def train(
     # to monitor if we've skipped many iterations in a row and trigger an early exit
     overflow_monitor = OverflowMonitor(optimizer)
     while iteration < neox_args.train_iters:
-        loss_dict, skipped_iter = train_step(
-            neox_args=neox_args,
-            timers=timers,
-            data_iterator=train_data_iterator,
-            model=model,
-            optimizer=optimizer,
-            lr_scheduler=lr_scheduler,
-        )
+
+
+        if neox_args.use_named_train_datasets:
+            # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} -- WEIGHT {neox_args.train_data_weights}")
+            batch_name = choices(dataset_names, weights=neox_args.train_data_weights, k=1)[0]
+            # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} USING DATASET {batch_name}")
+            batch_iterator = train_data_iterator[batch_name]
+        else:
+            batch_iterator = train_data_iterator
+
+        # if using named train datasets, allow for restarting a dataset
+        if neox_args.use_named_train_datasets:
+            try:
+                loss_dict, skipped_iter = train_step(
+                    neox_args=neox_args,
+                    timers=timers,
+                    data_iterator=batch_iterator,
+                    model=model,
+                    optimizer=optimizer,
+                    lr_scheduler=lr_scheduler,
+                )
+            except StopIteration:
+                # stop timers from attempted iteration
+                timers("forward").stop()
+                timers("batch generator").stop()
+                # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} RESTARTING DATASET {batch_name}")
+                # reinitialize dataset
+                train_dataloaders[batch_name].dataset._reinitialize()
+                # update completed epochs
+                neox_args.dataset_epochs[batch_name] = train_dataloaders[batch_name].dataset._completed_epochs
+                # wait for all processes
+                torch.distributed.barrier()
+                # create iterator from dataloader
+                train_data_iterator[batch_name] = iter(train_dataloaders[batch_name])
+                # continue with new batch
+                batch_iterator = train_data_iterator[batch_name]
+                loss_dict, skipped_iter = train_step(
+                    neox_args=neox_args,
+                    timers=timers,
+                    data_iterator=batch_iterator,
+                    model=model,
+                    optimizer=optimizer,
+                    lr_scheduler=lr_scheduler,
+                )
+        else:
+            loss_dict, skipped_iter = train_step(
+                neox_args=neox_args,
+                timers=timers,
+                data_iterator=batch_iterator,
+                model=model,
+                optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
+            )
         iteration += 1
+
+        # if using named train datasets, update the iteration count
+        if neox_args.use_named_train_datasets:
+            neox_args.dataset_iterations[batch_name] += 1
 
         overflow_monitor.check(skipped_iter)  # check for repeated overflow
         if neox_args.log_gradient_noise_scale:  # log noise scale if applicable
@@ -631,16 +714,28 @@ def train(
             and neox_args.do_valid
         ):
             prefix = "iteration {}".format(iteration)
-            evaluate_and_print_results(
-                neox_args=neox_args,
-                prefix=prefix,
-                forward_step_func=forward_step,
-                data_iterator=valid_data_iterator,
-                model=model,
-                iteration=iteration,
-                verbose=False,
-                timers=timers,
-            )
+            if neox_args.use_named_eval_datasets:
+                evaluate_named_datasets_and_print_results(
+                    neox_args=neox_args,
+                    prefix=prefix,
+                    forward_step_func=forward_step,
+                    data_iterators=valid_data_iterator,
+                    model=model,
+                    iteration=iteration,
+                    verbose=False,
+                    timers=timers,
+                )
+            else:
+                evaluate_and_print_results(
+                    neox_args=neox_args,
+                    prefix=prefix,
+                    forward_step_func=forward_step,
+                    data_iterator=valid_data_iterator,
+                    model=model,
+                    iteration=iteration,
+                    verbose=False,
+                    timers=timers,
+                )
 
         if neox_args.exit_interval and iteration % neox_args.exit_interval == 0:
             torch.distributed.barrier()
@@ -734,6 +829,113 @@ def evaluate(
     return eval_results
 
 
+def evaluate_named_dataset(
+    neox_args, forward_step_fn, name, data_iterator, model, verbose=False, timers=None, debug=False
+):
+    """Evaluation.
+    neox_args: NeoX Arguments
+    forward_step_fn: function with args `neox_args, timers,
+                    data_iterator & model that will run a forward pass on the model
+    data_iterator: Iterator that iterates over batches of data. Should return data in the form:
+                    {'text': np.array([tokens], dtype=np.int64)}
+                    where the size of the array is the model's context size + 1
+                    (`get_batch` transforms it into inputs / labels)
+    """
+    # Turn on evaluation mode which disables dropout.
+    model.eval()
+    # print num samples in data_iterator
+    if debug:
+        print_rank_0(f"num samples in {name} data_iterator: {len(data_iterator)}")
+        num_samples = []
+        token_list = []
+    losses = []
+
+    # Items and their type.
+    keys = ["text"]
+    datatype = torch.int64
+
+    if neox_args.char_level_ppl:
+        data_iterator = CharCounter(data_iterator, neox_args.tokenizer)
+
+    with torch.no_grad():
+        for iteration, batch in enumerate(data_iterator):
+            if verbose and iteration % neox_args.log_interval == 0:
+                print_rank_0(
+                    "Evaluating {} - iter {}".format(name, iteration)
+                )
+
+            tokens, labels, loss_mask, attention_mask, position_ids = _get_batch(
+                neox_args=neox_args,
+                tokenizer=neox_args.tokenizer,
+                keys=keys,
+                data=batch,
+                datatype=datatype,
+            )
+
+
+            outputs = model((tokens, position_ids, attention_mask))
+            loss = cross_entropy(
+                outputs, (labels, loss_mask), _fp16=neox_args.fp16_lm_cross_entropy
+            )
+            losses.append(loss)
+
+            if debug:
+                num_samples.append(tokens.shape[0])
+                token_list.append(tokens)
+
+            # When contiguous memory optimizations are enabled, the buffers
+            # allocated by the optimizations are deallocated during backward pass
+            # in the absence of backward pass the buffers should be reset after each
+            # forward pass
+            if neox_args.deepspeed and neox_args.deepspeed_activation_checkpointing:
+                deepspeed.checkpointing.reset()
+
+    if debug:
+        # collect all tokens
+        all_tokens = torch.cat(token_list, dim=0)
+        print(f"rank {torch.distributed.get_rank()} all_tokens: {all_tokens.shape}")
+        torch.distributed.all_reduce(all_tokens)
+        if torch.distributed.get_rank() == 0:
+            count = 0
+            # count times first item in token_list is equal to anything in all_tokens
+            first_example = token_list[0]
+            for example in all_tokens:
+                if torch.equal(first_example, example):
+                    count += 1
+            print(f"rank {torch.distributed.get_rank()} count: {count}")
+        # print num samples
+        print(f"rank {torch.distributed.get_rank()} num samples: {num_samples}")
+        reduced_samples = torch.tensor(sum(num_samples), dtype=torch.long, device=torch.cuda.current_device())
+        torch.distributed.all_reduce(reduced_samples, torch.distributed.ReduceOp.SUM)
+        print_rank_0(f"eval {name} total samples: {reduced_samples.item()}")
+
+    # reduces losses across processes for logging & run eval harness tasks
+    eval_results = {f"lm_loss": reduce_losses(losses).mean().item()}
+    eval_results[f"lm_loss_ppl"] = math.exp(eval_results[f"lm_loss"])
+
+    if neox_args.char_level_ppl:
+        # calculate character level perplexity, if specified
+        # if neox_args.char_level_ppl:
+        # unwrap the data_iterator
+        tokens_per_char = data_iterator.tokens_per_char()
+        print_rank_0(f"Counting chars took {data_iterator.total_time} seconds")
+
+        data_iterator = data_iterator.data_iterator
+        eval_results["lm_loss_char_lvl_ppl"] = math.exp(
+            eval_results["lm_loss"] * tokens_per_char
+        )
+
+    if neox_args.eval_tasks:
+        eval_results.update(
+            run_eval_harness(
+                model, forward_step_fn, neox_args, eval_tasks=neox_args.eval_tasks
+            ).get("results")
+        )
+    # Move model back to the train mode.
+    model.train()
+    return eval_results
+
+
 def evaluate_and_print_results(
     neox_args,
     prefix,
@@ -781,3 +983,113 @@ def evaluate_and_print_results(
     print_rank_0("-" * length)
     print_rank_0(string)
     print_rank_0("-" * length)
+
+def evaluate_named_datasets_and_print_results(
+    neox_args,
+    prefix,
+    forward_step_func,
+    data_iterators,
+    model,
+    iteration,
+    verbose=False,
+    timers=None,
+    chart_name="validation",
+):
+    """Helper function to evaluate named datasets and dump results on screen."""
+    string = f" {chart_name} results at {prefix} | "
+
+    overall_results = {}
+
+    for name, iterator in data_iterators.items():
+        total_loss_dict = evaluate_named_dataset(
+            neox_args=neox_args,
+            forward_step_fn=forward_step_func,
+            name=name,
+            data_iterator=iterator,
+            model=model,
+            verbose=verbose,
+            timers=timers,
+        )
+        overall_results[name] = total_loss_dict
+        string += f"\n{name} | "
+        for k, v in total_loss_dict.items():
+            if isinstance(v, dict):
+                for k2, v2 in v.items():
+                    k3 = "_".join([k, k2])
+                    string += f"{k3} value: {v2:.6E} | "
+                    tb_wandb_log(
+                        f"{chart_name}/{k3}/{name}",
+                        v2,
+                        iteration,
+                        use_wandb=neox_args.use_wandb,
+                        tensorboard_writer=neox_args.tensorboard_writer,
+                    )
+            else:
+                string += f"{k} value: {v:.6E} | "
+                tb_wandb_log(
+                    f"{chart_name}/{k}/{name}",
+                    v,
+                    iteration,
+                    use_wandb=neox_args.use_wandb,
+                    tensorboard_writer=neox_args.tensorboard_writer,
+                )
+
+    # calculate average loss and perplexity across all datasets
+    avg_lm_loss, weighted_avg_lm_loss = 0, 0
+    avg_ppl, weighted_avg_ppl = 0, 0
+    record_weighted_dataset = False
+    if "validation" in chart_name and hasattr(neox_args, "validation_dataset_weights"):
+        dataset_weights = neox_args.validation_dataset_weights
+        record_weighted_dataset = True
+    elif "test" in chart_name and hasattr(neox_args, "test_dataset_weights"):
+        dataset_weights = neox_args.test_dataset_weights
+        record_weighted_dataset = True
+
+    for name, results in overall_results.items():
+        avg_lm_loss += results["lm_loss"]
+        avg_ppl += results["lm_loss_ppl"]
+        if record_weighted_dataset:
+            weighted_avg_lm_loss += results["lm_loss"] * dataset_weights[name]
+            weighted_avg_ppl += results["lm_loss_ppl"] * dataset_weights[name]
+
+    avg_lm_loss /= len(overall_results)
+    avg_ppl /= len(overall_results)
+    string += f"\navg_loss value: {avg_lm_loss:.6E} | "
+    string += f"avg_ppl value: {avg_ppl:.6E} | "
+    tb_wandb_log(
+        f"{chart_name}/avg_lm_loss",
+        avg_lm_loss,
+        iteration,
+        use_wandb=neox_args.use_wandb,
+        tensorboard_writer=neox_args.tensorboard_writer,
+    )
+    tb_wandb_log(
+        f"{chart_name}/avg_ppl",
+        avg_ppl,
+        iteration,
+        use_wandb=neox_args.use_wandb,
+        tensorboard_writer=neox_args.tensorboard_writer,
+    )
+
+    if record_weighted_dataset:
+        string += f"\nweighted_avg_lm_loss value: {weighted_avg_lm_loss:.6E} | "
+        string += f"weighted_avg_ppl value: {weighted_avg_ppl:.6E} | "
+        tb_wandb_log(
+            f"{chart_name}/weighted_avg_lm_loss",
+            weighted_avg_lm_loss,
+            iteration,
+            use_wandb=neox_args.use_wandb,
+            tensorboard_writer=neox_args.tensorboard_writer,
+        )
+        tb_wandb_log(
+            f"{chart_name}/weighted_avg_ppl",
+            weighted_avg_ppl,
+            iteration,
+            use_wandb=neox_args.use_wandb,
+            tensorboard_writer=neox_args.tensorboard_writer,
+        )
+
+    length = len(string) + 1
+    print_rank_0("-" * min(80,length))
+    print_rank_0(string)
+    print_rank_0("-" * min(80,length))

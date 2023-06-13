@@ -191,6 +191,35 @@ def training_log(
             tensorboard_writer=neox_args.tensorboard_writer,
         )
 
+    # log iterations, percent of total iterations, and epochs on each domain
+    if neox_args.use_named_train_datasets:
+        assert(hasattr(neox_args, "dataset_iterations"))
+        for domain, iterations in neox_args.dataset_iterations.items():
+            tb_wandb_log(
+                f"train/iterations/{domain}",
+                iterations,
+                iteration,
+                use_wandb=neox_args.use_wandb,
+                tensorboard_writer=neox_args.tensorboard_writer,
+            )
+            tb_wandb_log(
+                f"train/percent/{domain}",
+                iterations / iteration,
+                iteration,
+                use_wandb=neox_args.use_wandb,
+                tensorboard_writer=neox_args.tensorboard_writer,
+            )
+        assert(hasattr(neox_args, "dataset_epochs"))
+        for domain, epochs in neox_args.dataset_epochs.items():
+            tb_wandb_log(
+                f"train/epochs/{domain}",
+                epochs,
+                iteration,
+                use_wandb=neox_args.use_wandb,
+                tensorboard_writer=neox_args.tensorboard_writer,
+            )
+
+
     # log gradient noise scale
     if neox_args.log_gradient_noise_scale:
         if noise_scale_logger.noise_scale is not None:

@@ -25,6 +25,16 @@ from megatron.data.blendable_dataset import BlendableDataset
 from megatron.data.gpt2_dataset import GPT2Dataset
 from megatron.data.samplers import DistributedBatchSampler
 
+def find_best_local_batch_size(dataset_size, local_batch_size, world_size):
+    for s in range(dataset_size, dataset_size-(world_size+1), -1):
+        if s % world_size == 0:
+            best_local_batch_size = s / world_size
+            break
+
+    while best_local_batch_size > local_batch_size:
+        best_local_batch_size //= 2
+
+    return int(best_local_batch_size)
 
 def make_data_loader(dataset, neox_args):
     """Build dataloader given an input dataset."""
@@ -35,6 +45,13 @@ def make_data_loader(dataset, neox_args):
     rank = mpu.get_data_parallel_rank()
     global_batch_size = neox_args.batch_size * world_size
     num_workers = neox_args.num_workers
+
+    # If the dataset is small enough, we may lose batches for highly distributed workloads, so reduce batch size to fit
+    # Time lost due to inefficiency (not a power of 2) will be negligible since it's a small dataset
+    if len(dataset) < global_batch_size * 5:
+        local_batch_size = find_best_local_batch_size(len(dataset), neox_args.batch_size, world_size)
+        global_batch_size = local_batch_size * world_size
+
 
     # Use a simple sampler with distributed batch sampler.
     sampler = torch.utils.data.SequentialSampler(dataset)

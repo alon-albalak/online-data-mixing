@@ -1,6 +1,6 @@
 # GENERAL CONFIGS THAT WILL BE USED FOR ALL RUNS
-CONFIGS="alon_configs/data/pile.yml alon_configs/models/160m.yml alon_configs/eval_tasks.yml alon_configs/init.yml alon_configs/optimizer.yml"
-# Doesn't include alon_configs/parallelism.yml
+CONFIGS="alon_configs/data/pile.yml alon_configs/models/160m.yml alon_configs/init.yml alon_configs/optimizer.yml"
+# Doesn't include alon_configs/eval_tasks.yml or alon_configs/parallelism.yml
 
 
 # RUN SPECIFIC CONFIGS

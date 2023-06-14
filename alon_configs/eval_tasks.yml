@@ -1,0 +1,5 @@
+{
+  "eval_tasks": ["lambada_openai", "piqa", "winogrande", "arc_easy", "sciq", "wikitext", "openbookqa"],
+  "eval_harness_interval": 100,
+  "do_lm_harness_eval": true,
+}

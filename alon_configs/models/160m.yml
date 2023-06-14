@@ -19,7 +19,7 @@
   # batch size (training on 1 gpu, takes up 37.5Gb of memory)
   "train_batch_size": 480,
   "train_micro_batch_size_per_gpu": 60,
-  "gradient_accumulation_steps": 4,
+  "gradient_accumulation_steps": 1,
   "data-impl": "mmap",
   "num_workers": 1,
 
@@ -29,11 +29,11 @@
   "distributed-backend": "nccl",
   "lr-decay-style": "cosine",
   "warmup": 0.01,
-  "checkpoint-factor": 1000,
+  "checkpoint-factor": 10000,
   "eval-interval": 1000,
-  "eval-iters": 10,
 
-  "log-interval": 10,
+  # logging
+  "log-interval": 100,
   "steps_per_print": 10,
   "wall_clock_breakdown": true,
 
@@ -44,8 +44,14 @@
   # wandb settings
   "use_wandb": true,
   "wandb_project": "neox",
-  "wandb_group": "160m",
 
-  "include": "localhost:0,1",
-  "world_size": 2,
+  # domain specific settings
+  "use_named_train_datasets": true,
+  "use_named_eval_datasets": true,
+  "max_validation_samples_per_dataset": 5000,
+
+  "keep_last_n_checkpoints": 1
+
+  # "include": "localhost:0,1",
+  # "world_size": 2,
 }

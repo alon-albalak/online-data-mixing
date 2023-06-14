@@ -70,8 +70,16 @@ class EvalHarnessAdapter(GPT2LM):
         self.is_main = neox_args.rank == 0
         self.is_local_main = neox_args.local_rank == 0
         self.is_model_parallel = neox_args.model_parallel_size > 1
-        self.is_pipe_parallel = self.model.is_pipe_parallel
-        self.is_data_parallel = self.model.is_data_parallel
+
+        try:
+            # original version, possibly expects an HF Transformers model
+            self.is_pipe_parallel = self.model.is_pipe_parallel
+            self.is_data_parallel = self.model.is_data_parallel
+        except:
+            # new version, expects a NeoX model
+            self.is_pipe_parallel = neox_args.pipe_parallel_size > 1
+            self.is_data_parallel = mpu.get_data_parallel_world_size() > 1
+        
         self.is_last_stage = (
             True if not self.is_pipe_parallel else model.is_last_stage()
         )  # only the last stage of the pipeline model will receive the logits
@@ -373,10 +381,12 @@ class EvalHarnessAdapter(GPT2LM):
     ):
         was_training = self.model.training
         self.model.eval()
-        in_micro_batches = (
-            self.model.micro_batches
-        )  # store input microbatches - we need to set to 1 during eval, but want to return to its original value after
-        self.model.micro_batches = 1
+        if hasattr(self.model, "micro_batches"):
+                
+            in_micro_batches = (
+                self.model.micro_batches
+            )  # store input microbatches - we need to set to 1 during eval, but want to return to its original value after
+            self.model.micro_batches = 1
         if eval_tasks is None:
             eval_tasks = [
                 "lambada",
@@ -441,7 +451,8 @@ class EvalHarnessAdapter(GPT2LM):
 
         if was_training:
             self.model.train()
-        self.model.micro_batches = in_micro_batches
+        if hasattr(self.model, "micro_batches"):
+            self.model.micro_batches = in_micro_batches
         return results
 
 

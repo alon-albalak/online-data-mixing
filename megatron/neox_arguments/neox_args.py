@@ -995,6 +995,14 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     """
     Maximum number of test samples to use. Useful for large datasets like The Pile.
     """
+    eval_harness_interval: int = None
+    """
+    Interval between running evaluation harness on validation set.
+    """
+    do_lm_harness_eval: bool = False
+    """
+    Whether to run the language modeling evaluation harness.
+    """
 
 
 @dataclass

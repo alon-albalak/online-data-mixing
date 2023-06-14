@@ -160,6 +160,10 @@ def pretrain(neox_args):
 
     if neox_args.do_test:
         # Run on test data.
+        if neox_args.do_lm_harness_eval:
+            # make sure we do the eval harness
+            neox_args.eval_harness_interval = 1
+
         prefix = "the end of training for test data"
         if neox_args.use_named_eval_datasets:
             evaluate_named_datasets_and_print_results(
@@ -642,7 +646,8 @@ def train(
                 # update completed epochs
                 neox_args.dataset_epochs[batch_name] = train_dataloaders[batch_name].dataset._completed_epochs
                 # wait for all processes
-                torch.distributed.barrier()
+                if torch.distributed.is_initialized():
+                    torch.distributed.barrier()
                 # create iterator from dataloader
                 train_data_iterator[batch_name] = iter(train_dataloaders[batch_name])
                 # continue with new batch
@@ -924,17 +929,16 @@ def evaluate_named_dataset(
         eval_results["lm_loss_char_lvl_ppl"] = math.exp(
             eval_results["lm_loss"] * tokens_per_char
         )
-
-    if neox_args.eval_tasks:
-        eval_results.update(
-            run_eval_harness(
-                model, forward_step_fn, neox_args, eval_tasks=neox_args.eval_tasks
-            ).get("results")
-        )
+        
     # Move model back to the train mode.
     model.train()
     return eval_results
 
+def evaluate_lm_harness(neox_args, forward_step_fn, model, eval_tasks=None):
+    model.eval()
+    eval_results = run_eval_harness(model, forward_step_fn, neox_args, eval_tasks=eval_tasks).get("results")
+    model.train()
+    return eval_results
 
 def evaluate_and_print_results(
     neox_args,
@@ -1089,6 +1093,25 @@ def evaluate_named_datasets_and_print_results(
             tensorboard_writer=neox_args.tensorboard_writer,
         )
 
+
+    if neox_args.do_lm_harness_eval and neox_args.eval_tasks and iteration % neox_args.eval_harness_interval == 0:
+        lm_harness_result = evaluate_lm_harness(neox_args, forward_step_func, model, neox_args.eval_tasks)
+
+        string += f"\nLM Harness"
+        string += "*" * 20
+        for k, v in lm_harness_result.items():
+            string += f"\n{k} | "
+            assert isinstance(v, dict), "LM Harness results should be a dict for each dataset"
+            for metric in v:
+                string += f"{metric} value: {v[metric]:.6E} | "
+                tb_wandb_log(
+                    f"{chart_name}/{k}/{metric}",
+                    v[metric],
+                    iteration,
+                    use_wandb=neox_args.use_wandb,
+                    tensorboard_writer=neox_args.tensorboard_writer,
+                )
+                
     length = len(string) + 1
     print_rank_0("-" * min(80,length))
     print_rank_0(string)

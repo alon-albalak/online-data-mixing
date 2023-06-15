@@ -1,24 +1,24 @@
 {
   # model settings
-  "num-layers": 24,
-  "hidden-size": 1024,
-  "num-attention-heads": 16,
-  "seq-length": 1024,
-  "max-position-embeddings": 1024,
+  "num-layers": 16,
+  "hidden-size": 2048,
+  "num-attention-heads": 8,
+  "seq-length": 2048,
+  "max-position-embeddings": 2048,
   "pos-emb": "rotary",
   "rotary-pct": 0.25,
   "no-weight-tying": true,
   "gpt-j-residual": true,
   "output-layer-parallelism": "column",
-
-  "attention-config": [[["flash"], 24]],
+  
+  "attention-config": [[["flash"], 16]],
 
   "scaled-upper-triang-masked-softmax-fusion": true,
   "bias-gelu-fusion": true,
 
   "train_batch_size": 480,
-  "train_micro_batch_size_per_gpu": 60,
-  "gradient_accumulation_steps": 1,
+  "train_micro_batch_size_per_gpu": 20,
+  "gradient_accumulation_steps": 3,
   "data-impl": "mmap",
   "num_workers": 1,
 

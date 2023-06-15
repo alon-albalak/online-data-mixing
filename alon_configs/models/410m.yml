@@ -22,6 +22,12 @@
   "data-impl": "mmap",
   "num_workers": 1,
 
+  # regularization
+  "gradient_clipping": 1.0,
+  "weight-decay": 0.1,
+  "hidden-dropout": 0,
+  "attention-dropout": 0,
+
   # train settings
   "train-iters": 100000,
   "lr-decay-iters": 100000,

@@ -17,8 +17,8 @@
   "bias-gelu-fusion": true,
 
   "train_batch_size": 480,
-  "train_micro_batch_size_per_gpu": 20,
-  "gradient_accumulation_steps": 3,
+  "train_micro_batch_size_per_gpu": 30,
+  "gradient_accumulation_steps": 2,
   "data-impl": "mmap",
   "num_workers": 1,
 

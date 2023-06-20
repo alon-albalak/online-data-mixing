@@ -1,5 +1,5 @@
 # GENERAL CONFIGS THAT WILL BE USED FOR ALL RUNS
-CONFIGS="alon_configs/data/pile.yml alon_configs/init.yml alon_configs/optimizer.yml alon_configs/train_data_weights/doremi_280.yml"
+CONFIGS="alon_configs/data/pile.yml alon_configs/init.yml alon_configs/train_data_weights/doremi_280.yml"
 # Doesn't include alon_configs/eval_tasks.yml or  alon_configs/parallelism.yml
 
 # RUN SPECIFIC CONFIGS

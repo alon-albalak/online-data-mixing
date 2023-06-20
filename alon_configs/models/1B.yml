@@ -74,7 +74,7 @@
   "lr-decay-style": "cosine",
   "warmup": 0.01,
   "checkpoint-factor": 10000,
-  "eval-interval": 5000,
+  "eval-interval": 1000,
 
   # logging
   "log-interval": 100,

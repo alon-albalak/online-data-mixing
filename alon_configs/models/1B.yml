@@ -2,9 +2,9 @@
   # model settings
   "num-layers": 16,
   "hidden-size": 2048,
-  "num-attention-heads": 8,
-  "seq-length": 2048,
-  "max-position-embeddings": 2048,
+  "num-attention-heads": 16,
+  "seq-length": 1024,
+  "max-position-embeddings": 1024,
   "pos-emb": "rotary",
   "rotary-pct": 0.25,
   "no-weight-tying": true,
@@ -17,8 +17,8 @@
   "bias-gelu-fusion": true,
 
   "train_batch_size": 480,
-  "train_micro_batch_size_per_gpu": 30,
-  "gradient_accumulation_steps": 2,
+  "train_micro_batch_size_per_gpu": 60,
+  "gradient_accumulation_steps": 1,
   "data-impl": "mmap",
   "num_workers": 1,
 

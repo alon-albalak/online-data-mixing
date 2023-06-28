@@ -56,6 +56,7 @@ from megatron.utils import (
 )
 from megatron.model.gpt2_model import cross_entropy
 from eval_tasks import run_eval_harness
+from megatron.data.data_sampling_utils import get_data_sampling_weighter
 
 from random import choices
 
@@ -605,6 +606,13 @@ def train(
         train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
         neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
         dataset_names = list(train_data_iterator.keys())
+        data_sampling_weights = get_data_sampling_weighter(
+            dataset_names=list(train_dataloaders.keys()),
+            weights=neox_args.train_data_weights,
+            warmup_steps=neox_args.data_sampling_warmup_steps,
+            update_frequency=neox_args.data_sampling_update_frequency,
+            update_method=neox_args.data_sampling_method
+            )
 
     timers("interval time").start()
     report_memory_flag = True
@@ -619,7 +627,7 @@ def train(
 
         if neox_args.use_named_train_datasets:
             # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} -- WEIGHT {neox_args.train_data_weights}")
-            batch_name = choices(dataset_names, weights=neox_args.train_data_weights, k=1)[0]
+            batch_name = choices(dataset_names, weights=data_sampling_weights(), k=1)[0]
             # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} USING DATASET {batch_name}")
             batch_iterator = train_data_iterator[batch_name]
         else:
@@ -752,6 +760,11 @@ def train(
                 )
             )
             sys.exit()
+
+        # update data sampling weights
+        reward = loss_dict["lm_loss"].item()
+
+        data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":reward})
 
     return iteration
 

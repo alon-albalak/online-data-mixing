@@ -276,6 +276,12 @@ class NeoXArgs(*BASE_CLASSES):
             default=None,
             help="Team name for Weights and Biases.",
         )
+        group.add_argument(
+            "--wandb_run_name",
+            type=str,
+            default=None,
+            help="Run name for Weights and Biases.",
+        )
 
         group = parser.add_argument_group(title="Eval args")
 
@@ -348,10 +354,11 @@ class NeoXArgs(*BASE_CLASSES):
         )
 
         if neox_args.wandb_group is not None:
-            # concat the wandb group name with a uid to make sure it's unique
+            # concat the wandb group name with a uid to make sure it's unique,
+            #   unless we have a run name
             import wandb
-
-            neox_args.wandb_group += "_" + wandb.util.generate_id()
+            if neox_args.wandb_run_name is None:
+                neox_args.wandb_group += "_" + wandb.util.generate_id()
         neox_args.print()
 
         return neox_args

@@ -50,8 +50,9 @@ def make_data_loader(dataset, neox_args):
     # Time lost due to inefficiency (not a power of 2) will be negligible since it's a small dataset
     if len(dataset) < global_batch_size * 5:
         local_batch_size = find_best_local_batch_size(len(dataset), neox_args.batch_size, world_size)
+        print_rank_0(f"WARNING: dataset size {len(dataset)} is too small for global batch size {global_batch_size}. "
+                        f"Reducing global batch size to {local_batch_size} * {world_size} = {local_batch_size*world_size} to fit dataset.")
         global_batch_size = local_batch_size * world_size
-
 
     # Use a simple sampler with distributed batch sampler.
     sampler = torch.utils.data.SequentialSampler(dataset)

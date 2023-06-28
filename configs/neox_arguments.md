@@ -1464,6 +1464,66 @@ Training Arguments
 
     Whether to calculate character level perplexity as well as token level perplexity. (may incur a time cost)
 
+- **use_named_train_datasets**: bool
+
+    Default = False
+
+    Whether to track train datasets by name. Currently assumes that dataset name exists in the filename and can be collected by file_path.split("/")[-2].
+
+- **use_named_eval_datasets**: bool
+
+    Default = False
+
+    Whether to track eval datasets by name. Currently assumes that dataset name exists in the filename and can be collected by file_path.split("/")[-2].
+
+- **max_validation_samples_per_dataset**: int
+
+    Default = None
+
+    Maximum number of validation samples to use. Useful for large datasets like The Pile.
+
+- **max_test_samples_per_dataset**: int
+
+    Default = None
+
+    Maximum number of test samples to use. Useful for large datasets like The Pile.
+
+- **eval_harness_interval**: int
+
+    Default = None
+
+    Interval between running evaluation harness on validation set.
+
+- **do_lm_harness_eval**: bool
+
+    Default = False
+
+    Whether to run the language modeling evaluation harness.
+
+## NeoXArgsDataSampling
+
+Args for weighted data sampling
+
+- **data_sampling_warmup_steps**: int
+
+    Default = 0
+
+    Number of steps prior to using weighted data sampling.
+    While iteration < data_sampling_warmup_steps, will sample from the full dataset uniformly.
+
+- **data_sampling_update_frequency**: int
+
+    Default = 0
+
+    Number of steps between updating the data sampling distribution.
+    If 0, will never update the data sampling distribution.
+
+- **data_sampling_method**: str
+
+    Default = None
+
+    Method for sampling data.
+    Options: `exp3`
 
 
 ## NeoXArgsDeepspeedConfig

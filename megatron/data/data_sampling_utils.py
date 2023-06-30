@@ -25,7 +25,7 @@ class BaseDataSamplingWeight:
     def __call__(self):
         return self.weights
     
-    def update(self):
+    def update(self, iteration: int, **kwargs):
         pass
     
 class DynamicDataSamplingWeight(BaseDataSamplingWeight):
@@ -52,6 +52,8 @@ class DynamicDataSamplingWeight(BaseDataSamplingWeight):
     def update(self, iteration: int, **kwargs):
         if self.update_scheduler.requires_update(iteration):
             self.weights = self.weight_updater.update(iteration=iteration, **kwargs)
+        else:
+            self.weight_updater.internal_update(iteration=iteration, **kwargs)
 
 class UpdateScheduler:
     def __init__(self, warmup_steps: int, update_frequency: int):
@@ -118,12 +120,28 @@ class Exp3WeightUpdater:
         for name in self.dataset_names:
             self._probabilities[name] = self.weights[self.dataset_map[name]]/total_weights
 
-        print(f"Rank: {torch.distributed.get_rank()} -- loss {loss} -- reward: {reward} -- eps {self.eps} -- scaling_factor {scaling_factor}"
-              f" -- cumulative_estimated_reward {self._cumulative_estimated_reward} -- weights {self.weights} -- probabilities {self._probabilities}"
-              f" -- total_weights {total_weights}"
-              )
+        # print(f"Rank: {torch.distributed.get_rank()} -- loss {loss} -- reward: {reward} -- eps {self.eps} -- scaling_factor {scaling_factor}"
+        #       f" -- cumulative_estimated_reward {self._cumulative_estimated_reward} -- weights {self.weights} -- probabilities {self._probabilities}"
+        #       f" -- total_weights {total_weights}"
+        #       )
 
         return list(self._probabilities.values())
+    
+    def internal_update(self, dataset_name: str, reward: float, iteration: int) -> None:
+
+        reward = reward/10
+
+        # print(f"Rank: {torch.distributed.get_rank()} -- dataset_name: {dataset_name} -- reward: {reward}"
+        #       f" -- eps {self.eps} -- prev_eps {self.prev_eps}")
+
+        # update cumulative estimated reward
+        self._cumulative_estimated_reward[dataset_name] += reward/self._probabilities[dataset_name]
+
+        # print(f"Rank: {torch.distributed.get_rank()} -- cumulative_estimated_reward {self._cumulative_estimated_reward}")
+
+        # calculate epsilons
+        self.prev_eps = self.eps
+        self.eps = min(1/self.num_datasets, math.sqrt(math.log(self.num_datasets)/(self.num_datasets*iteration)))
 
         
 def get_weight_updater(update_method: str, dataset_names, weights):

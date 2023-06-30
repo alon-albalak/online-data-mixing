@@ -574,6 +574,7 @@ def train_step_pipe(neox_args, timers, model, data_iterator):
         "optimizer",
         "batch generator",
         "data loader",
+        "data sampling update"
     ]:
         timers(t).reset()
     return loss_dict
@@ -763,8 +764,9 @@ def train(
 
         # update data sampling weights
         reward = loss_dict["lm_loss"].item()
-
+        timers("data sampling update").start()
         data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":reward})
+        timers("data sampling update").stop()
 
     return iteration
 
@@ -950,8 +952,8 @@ def evaluate_named_dataset(
 def evaluate_lm_harness(neox_args, forward_step_fn, model, eval_tasks=None):
     model.eval()
     # set eval_harness to use half sized batches since it requires more memory
-    # eval_results = run_eval_harness(model, forward_step_fn, neox_args, eval_tasks=eval_tasks, batch_size = neox_args.batch_size * max(1, mpu.get_data_parallel_world_size()//2)).get("results")
-    eval_results = run_eval_harness(model, forward_step_fn, neox_args, eval_tasks=eval_tasks).get("results")
+    eval_results = run_eval_harness(model, forward_step_fn, neox_args, eval_tasks=eval_tasks, batch_size = neox_args.batch_size * max(1/2, mpu.get_data_parallel_world_size()//2)).get("results")
+    # eval_results = run_eval_harness(model, forward_step_fn, neox_args, eval_tasks=eval_tasks).get("results")
     model.train()
     return eval_results
 

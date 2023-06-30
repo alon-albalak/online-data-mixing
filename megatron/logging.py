@@ -136,6 +136,7 @@ def training_log(
         add_to_logging("backward-clip-grad")
         add_to_logging("optimizer")
         add_to_logging("batch generator")
+        add_to_logging("data sampling update")
 
         # Log timer info to tensorboard and wandb
         normalizer = iteration % neox_args.log_interval

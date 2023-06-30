@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import gc
+import torch
 from megatron.utils import is_local_main, print_rank_0
 import best_download
 
@@ -469,9 +471,18 @@ def run_eval_harness(
     adapter = EvalHarnessAdapter(
         model, forward_step_fn, neox_args, batch_size=batch_size
     )
-    return adapter.run_eval(
+    results = adapter.run_eval(
         eval_tasks=eval_tasks,
         num_fewshot=num_fewshot,
         bootstrap_iters=bootstrap_iters,
         use_cache=False,
     )
+
+    del adapter
+    gc.collect()
+    torch.cuda.empty_cache()
+    if torch.distributed.is_initialized():
+        torch.distributed.barrier()
+
+
+    return results

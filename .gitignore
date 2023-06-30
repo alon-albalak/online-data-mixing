@@ -151,3 +151,6 @@ test_logs/
 logs/
 tensorboard/
 src/
+
+# configs
+alon_configs/run_specific/*

@@ -695,6 +695,12 @@ def train(
         else:
             lr = 0
 
+        # update data sampling weights
+        reward = loss_dict["lm_loss"].item()
+        timers("data sampling update").start()
+        data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":reward})
+        timers("data sampling update").stop()
+
         # Logging.
         report_memory_flag = training_log(
             neox_args=neox_args,
@@ -709,6 +715,7 @@ def train(
             model=model,
             optimizer=optimizer,
             noise_scale_logger=noise_scale_logger,
+            data_sampling_weights=data_sampling_weights
         )
 
         # Checkpointing
@@ -761,12 +768,6 @@ def train(
                 )
             )
             sys.exit()
-
-        # update data sampling weights
-        reward = loss_dict["lm_loss"].item()
-        timers("data sampling update").start()
-        data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":reward})
-        timers("data sampling update").stop()
 
     return iteration
 

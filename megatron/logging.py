@@ -99,6 +99,7 @@ def training_log(
     model,
     optimizer,
     noise_scale_logger,
+    data_sampling_weights=None
 ):
     """Log training information such as losses, timing, etc."""
 
@@ -219,6 +220,25 @@ def training_log(
                 use_wandb=neox_args.use_wandb,
                 tensorboard_writer=neox_args.tensorboard_writer,
             )
+        if data_sampling_weights:
+            for k, v in data_sampling_weights.log().items():
+                if isinstance(v, dict):
+                    for ki, vi in v.items():
+                        tb_wandb_log(
+                            f"train/{k}/{ki}",
+                            vi,
+                            iteration,
+                            use_wandb=neox_args.use_wandb,
+                            tensorboard_writer=neox_args.tensorboard_writer,
+                        )
+                else:
+                    tb_wandb_log(
+                        f"train/{k}",
+                        v,
+                        iteration,
+                        use_wandb=neox_args.use_wandb,
+                        tensorboard_writer=neox_args.tensorboard_writer,
+                    )
 
 
     # log gradient noise scale

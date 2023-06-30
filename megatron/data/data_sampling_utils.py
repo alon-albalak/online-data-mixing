@@ -27,6 +27,9 @@ class BaseDataSamplingWeight:
     
     def update(self, iteration: int, **kwargs):
         pass
+
+    def log(self):
+        pass
     
 class DynamicDataSamplingWeight(BaseDataSamplingWeight):
     """
@@ -39,6 +42,7 @@ class DynamicDataSamplingWeight(BaseDataSamplingWeight):
         warmup_steps: Optional[int] = 0,
         update_frequency: Optional[int] = 0,
         update_method: Optional[str] = None,
+        internal_updates: Optional[bool] = False,
     ):
         super().__init__(weights=weights)
         self.dataset_names = dataset_names
@@ -48,12 +52,19 @@ class DynamicDataSamplingWeight(BaseDataSamplingWeight):
         )
         self.update_method = update_method
         self.weight_updater = get_weight_updater(update_method, dataset_names, weights)
+        self.internal_updates = internal_updates
         
     def update(self, iteration: int, **kwargs):
         if self.update_scheduler.requires_update(iteration):
             self.weights = self.weight_updater.update(iteration=iteration, **kwargs)
-        else:
+        elif self.internal_updates:
             self.weight_updater.internal_update(iteration=iteration, **kwargs)
+
+    def log(self):
+        logging_dict = {}
+        for var in self.weight_updater.vars_to_log:
+            logging_dict[var] = getattr(self.weight_updater, var)
+        return logging_dict
 
 class UpdateScheduler:
     def __init__(self, warmup_steps: int, update_frequency: int):
@@ -78,6 +89,7 @@ class Exp3WeightUpdater:
         self._probabilities = {name: weight/total_weights for name, weight in zip(dataset_names, weights)}
         self.eps = 1/self.num_datasets
         self.prev_eps = None
+        self.vars_to_log = ["_probabilities", "_cumulative_estimated_reward"]
 
     def update(self, dataset_name: str, reward: float, iteration: int) -> List[float]:
         """

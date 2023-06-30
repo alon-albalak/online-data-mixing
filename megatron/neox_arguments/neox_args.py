@@ -1007,6 +1007,27 @@ class NeoXArgsTraining(NeoXArgsTemplate):
     Whether to run the language modeling evaluation harness.
     """
 
+@dataclass
+class NeoXArgsDataSampling(NeoXArgsTemplate):
+    """
+    Weighted Data Sampling arguments
+    """
+    data_sampling_warmup_steps: int = 0
+    """
+    Number of steps prior to using weighted data sampling.
+    While iteration < data_sampling_warmup_steps, will sample from the full dataset uniformly.
+    """
+    data_sampling_update_frequency: int = 0
+    """
+    Number of steps between updating the data sampling distribution.
+    If 0, will never update the data sampling distribution.
+    """
+    data_sampling_method: str = None
+    """
+    Method for sampling data.
+    Options: `exp3`
+    """
+
 
 @dataclass
 class NeoXArgsTextgen(NeoXArgsTemplate):

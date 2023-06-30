@@ -56,6 +56,7 @@ from megatron.utils import (
 )
 from megatron.model.gpt2_model import cross_entropy
 from eval_tasks import run_eval_harness
+from megatron.data.data_sampling_utils import get_data_sampling_weighter
 
 from random import choices
 
@@ -573,6 +574,7 @@ def train_step_pipe(neox_args, timers, model, data_iterator):
         "optimizer",
         "batch generator",
         "data loader",
+        "data sampling update"
     ]:
         timers(t).reset()
     return loss_dict
@@ -605,6 +607,13 @@ def train(
         train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
         neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
         dataset_names = list(train_data_iterator.keys())
+        data_sampling_weights = get_data_sampling_weighter(
+            dataset_names=list(train_dataloaders.keys()),
+            weights=neox_args.train_data_weights,
+            warmup_steps=neox_args.data_sampling_warmup_steps,
+            update_frequency=neox_args.data_sampling_update_frequency,
+            update_method=neox_args.data_sampling_method
+            )
 
     timers("interval time").start()
     report_memory_flag = True
@@ -619,7 +628,7 @@ def train(
 
         if neox_args.use_named_train_datasets:
             # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} -- WEIGHT {neox_args.train_data_weights}")
-            batch_name = choices(dataset_names, weights=neox_args.train_data_weights, k=1)[0]
+            batch_name = choices(dataset_names, weights=data_sampling_weights(), k=1)[0]
             # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} USING DATASET {batch_name}")
             batch_iterator = train_data_iterator[batch_name]
         else:
@@ -686,6 +695,12 @@ def train(
         else:
             lr = 0
 
+        # update data sampling weights
+        reward = loss_dict["lm_loss"].item()
+        timers("data sampling update").start()
+        data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":reward})
+        timers("data sampling update").stop()
+
         # Logging.
         report_memory_flag = training_log(
             neox_args=neox_args,
@@ -700,6 +715,7 @@ def train(
             model=model,
             optimizer=optimizer,
             noise_scale_logger=noise_scale_logger,
+            data_sampling_weights=data_sampling_weights
         )
 
         # Checkpointing
@@ -937,8 +953,8 @@ def evaluate_named_dataset(
 def evaluate_lm_harness(neox_args, forward_step_fn, model, eval_tasks=None):
     model.eval()
     # set eval_harness to use half sized batches since it requires more memory
-    # eval_results = run_eval_harness(model, forward_step_fn, neox_args, eval_tasks=eval_tasks, batch_size = neox_args.batch_size * max(1, mpu.get_data_parallel_world_size()//2)).get("results")
-    eval_results = run_eval_harness(model, forward_step_fn, neox_args, eval_tasks=eval_tasks).get("results")
+    eval_results = run_eval_harness(model, forward_step_fn, neox_args, eval_tasks=eval_tasks, batch_size = neox_args.batch_size * max(1/2, mpu.get_data_parallel_world_size()//2)).get("results")
+    # eval_results = run_eval_harness(model, forward_step_fn, neox_args, eval_tasks=eval_tasks).get("results")
     model.train()
     return eval_results
 

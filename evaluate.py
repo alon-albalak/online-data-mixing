@@ -41,21 +41,28 @@ def main():
         bootstrap_iters=10000,
     )
     if neox_args.rank == 0:
-        init_wandb(neox_args=neox_args)
+        # init_wandb(neox_args=neox_args)
         # log to wandb
         for k, v in results["results"].items():
             if isinstance(v, dict):
-                for k2, v2 in v.items():
-                    k3 = "_".join([k, k2])
+                for metric in v:
                     tb_wandb_log(
-                        f"eval/{k3}",
-                        v2,
+                        f"test/{k}/{metric}",
+                        v[metric],
                         neox_args.iteration,
                         use_wandb=neox_args.use_wandb,
                     )
+                # for k2, v2 in v.items():
+                #     k3 = "_".join([k, k2])
+                #     tb_wandb_log(
+                #         f"test/{k3}",
+                #         v2,
+                #         neox_args.iteration,
+                #         use_wandb=neox_args.use_wandb,
+                #     )
             else:
                 tb_wandb_log(
-                    f"eval/{k}",
+                    f"test/{k}",
                     v,
                     neox_args.iteration,
                     use_wandb=neox_args.use_wandb,

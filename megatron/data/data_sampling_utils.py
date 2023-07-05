@@ -1,7 +1,225 @@
-from typing import List, Optional
+from typing import List, Optional, Dict, Iterator
 import numpy as np
 import math
+import random
 import torch
+
+from megatron import print_rank_0
+
+
+class WeightedRandomSampler(torch.utils.data.Sampler):
+    datasets: Dict[str, torch.utils.data.Dataset]
+    weights: List[float]
+
+    def __init__(self, datasets, weights, num_samples=None, generator=None):
+        self.datasets = datasets
+        self.weights = weights
+        if num_samples is not None:
+            self.num_samples = num_samples
+        else:
+            self.num_samples = sum(len(dataset) for dataset in datasets.values())
+        self.generator = generator
+        self.epochs = {dataset_name: 0 for dataset_name in datasets.keys()}
+
+        self._dataset_map = {}
+        self._inverse_dataset_map = {}
+        self._dataset_offsets = {}
+        offset = 0
+        for i, (dataset_name, dataset) in enumerate(datasets.items()):
+            self._dataset_map[i] = dataset_name
+            self._inverse_dataset_map[dataset_name] = i
+            self._dataset_offsets[i] = offset
+            offset += len(dataset)
+
+        # self._dataset_map = {dataset_name: i for i, dataset_name in enumerate(datasets.keys())}
+        # self._dataset_offsets = [dataset]
+        self._dataset_options = range(len(datasets.keys()))
+        self._reset(generator)
+        self._all_done = False
+
+    @property
+    def all_done(self) -> bool:
+        return self._all_done
+
+    @all_done.setter
+    def all_done(self, done):
+        self._all_done = done
+
+    @property
+    def weights(self) -> List[float]:
+        return self._weights
+    
+    @weights.setter
+    def weights(self, weights):
+        self._weights = weights
+
+    def iterate_epoch(self, dataset_name: str) -> None:
+        self.epochs[dataset_name] += 1
+
+    def _reset(self, generator):
+        self._samplers = [iter(torch.utils.data.RandomSampler(dataset, generator=generator)) for dataset in self.datasets.values()]
+
+    def _reset_single(self, dataset_name: str, generator):
+        self._samplers[self._inverse_dataset_map[dataset_name]] = iter(torch.utils.data.RandomSampler(self.datasets[dataset_name], generator=generator))
+
+    def _infinite_iterator(self):
+        while True:
+
+            # check for manual exit
+            if self.all_done:
+                break
+
+            chosen_dataset = random.choices(self._dataset_options, weights=self._weights, k=1)[0]
+            dataset_name = self._dataset_map[chosen_dataset]
+
+            try:
+                chosen_sample = next(self._samplers[chosen_dataset])
+            except StopIteration:
+                self.iterate_epoch(dataset_name)
+                generator = torch.Generator()
+                generator.manual_seed(self.generator.seed() + self.epochs[dataset_name])
+                self._reset_single(dataset_name, self.generator)
+                chosen_sample = next(self._samplers[chosen_dataset])
+            yield chosen_sample + self._dataset_offsets[chosen_dataset]
+
+    def __iter__(self) -> Iterator[int]:
+        return self._infinite_iterator()
+
+    def __len__(self):
+        return self.num_samples
+
+class DistributedWeightedRandomSampler(torch.utils.data.distributed.DistributedSampler):
+    datasets: Dict[str, torch.utils.data.Dataset]
+    weights: List[float]
+    def __init__(self, datasets, weights, world_size: Optional[int] = None,
+                 rank: Optional[int] = None, shuffle: bool = True,
+                 seed: int = 0, drop_last: bool = False) -> None:
+        if world_size is None:
+            if not torch.distributed.is_available():
+                raise RuntimeError("Requires distributed package to be available")
+            world_size = torch.distributed.get_world_size()
+        if rank is None:
+            if not torch.distributed.is_available():
+                raise RuntimeError("Requires distributed package to be available")
+            rank = torch.distributed.get_rank()
+        if rank >= world_size or rank < 0:
+            raise ValueError(f"Invalid rank {rank}, rank should be in the interval"
+                             f"[0, {world_size - 1}]")
+        # self.datasets = datasets
+        self.weights = weights
+        self.world_size = world_size
+        self.rank = rank
+        self.epochs = {dataset_name: 0 for dataset_name in datasets.keys()}
+        self.drop_last = drop_last
+        if self.drop_last:
+            print_rank_0("WARNING: drop_last=True is not supported for DistributedWeightedRandomSampler, "
+                           "and will be ignored.")
+        self.shuffle = shuffle
+        self.seed = seed
+
+        # initialize mappings, samples, and offsets
+        self.total_samples = 0
+        self.local_samples = {}
+        self._dataset_map = {}
+        self._global_offsets = {}
+        self._local_offsets = {}
+        global_offset = 0
+        dropped_samples = {}
+        for i, (dataset_name, dataset) in enumerate(datasets.items()):
+            self._dataset_map[i] = dataset_name
+            self._global_offsets[dataset_name] = global_offset
+            dataset_samples = len(dataset)
+            
+            if dataset_samples % self.world_size != 0:
+                # Split to the nearest number of samples that is evenly divisible across all replicas
+                self.local_samples[dataset_name] = math.ceil(
+                    (dataset_samples - self.world_size) / self.world_size
+                )
+            else:
+                self.local_samples[dataset_name] = math.ceil(len(dataset) / self.world_size)
+
+            self.total_samples += self.local_samples[dataset_name]
+            self._local_offsets[dataset_name] = self.local_samples[dataset_name] * self.rank
+            global_offset += dataset_samples
+            dropped_samples[dataset_name] = dataset_samples - self.local_samples[dataset_name] * self.world_size
+
+        self.total_local_samples = sum(self.local_samples.values())
+
+        print_rank_0(f"Rank: {self.rank} -- Datasampler World Size: {self.world_size}"
+                    f" -- Total samples: {self.total_samples} -- Local samples: {self.local_samples}"
+                    f" -- Global offsets: {self._global_offsets} -- Local offsets: {self._local_offsets}"
+                    f" -- Dropped samples: {dropped_samples}"
+                )
+
+        self._dataset_options = range(len(datasets.keys()))
+        self._reset()
+        self._all_done = False
+
+    @property
+    def all_done(self) -> bool:
+        return self._all_done
+
+    @all_done.setter
+    def all_done(self, done):
+        self._all_done = done
+
+    @property
+    def weights(self) -> List[float]:
+        return self._weights
+    
+    @weights.setter
+    def weights(self, weights):
+        self._weights = weights
+
+    def iterate_epoch(self, dataset_name: str) -> None:
+        self.epochs[dataset_name] += 1
+
+    def _reset(self):
+        # initialize random number generators
+        python_rng = np.random.default_rng(self.seed + self.rank)
+        random.seed(python_rng.integers(0, 2**32 - 1))
+
+        # Reset all samplers based on current state
+        self._samplers = {}
+        for i, (dataset_name, num_samples) in enumerate(self.local_samples.items()):
+            indices = list(range(num_samples))
+            dataset_seed = self.seed + i + self.rank + ((i+1)*self.rank)
+            dataset_rng = np.random.default_rng(dataset_seed)
+            g = torch.Generator()
+            g.manual_seed(int(dataset_rng.integers(0, 2**32 - 1)))
+            self._samplers[dataset_name] = iter(torch.utils.data.RandomSampler(indices, generator=g))
+
+    def _reset_single(self, dataset_name: str, g: torch.Generator):
+        indices = list(range(self.local_samples[dataset_name]))
+        self._samplers[dataset_name] = iter(torch.utils.data.RandomSampler(indices, generator=g))
+
+    def _infinite_iterator(self) -> Iterator[int]:
+        while True:
+
+            # check for manual exit
+            if self.all_done:
+                break
+
+            chosen_dataset = random.choices(self._dataset_options, weights=self._weights, k=1)[0]
+            dataset_name = self._dataset_map[chosen_dataset]
+
+            try:
+                chosen_sample = next(self._samplers[dataset_name])
+            except StopIteration:
+                self.iterate_epoch(dataset_name)
+                generator = torch.Generator()
+                generator.manual_seed(self.seed + self.epochs[dataset_name] + self.rank)
+                self._reset_single(dataset_name, generator)
+                chosen_sample = next(self._samplers[dataset_name])
+            yield chosen_sample + self._global_offsets[dataset_name] + self._local_offsets[dataset_name]
+        
+
+    def __iter__(self) -> Iterator[int]:
+        return self._infinite_iterator()
+
+    def __len__(self) -> int:
+        return self.total_local_samples
+
 
 class BaseDataSamplingWeight:
     """
@@ -29,7 +247,7 @@ class BaseDataSamplingWeight:
         pass
 
     def log(self):
-        pass
+        return {}
     
 class DynamicDataSamplingWeight(BaseDataSamplingWeight):
     """

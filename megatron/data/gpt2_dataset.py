@@ -38,7 +38,8 @@ class GPT2Dataset(torch.utils.data.Dataset):
         seed,
         build_index_mappings=True,
         use_shared_fs=True,
-        max_samples = None
+        max_samples = None,
+        name_passthrough = False
     ):
 
         self.name = name
@@ -49,6 +50,7 @@ class GPT2Dataset(torch.utils.data.Dataset):
         self.seed=seed
         self.use_shared_fs=use_shared_fs
         self.max_samples = max_samples
+        self.name_passthrough = name_passthrough
         if num_samples is None:
             self._repeatable=True
             self._completed_epochs = 0
@@ -177,7 +179,10 @@ class GPT2Dataset(torch.utils.data.Dataset):
                 )
                 sample = np.concatenate(sample_list)
 
-            return {"text": np.array(sample, dtype=np.int64)}
+            if self.name_passthrough:
+                return {"text": np.array(sample, dtype=np.int64), "dataset_name": self.name}
+            else:
+                return {"text": np.array(sample, dtype=np.int64)}
         except IndexError:
             new_idx = idx % len(self)
             print(

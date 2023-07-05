@@ -16,7 +16,7 @@ import sys
 import torch
 import wandb
 from megatron import mpu, print_rank_0
-from megatron.utils import report_memory
+from megatron.utils import report_memory, reduce_int
 
 
 class Tee:
@@ -193,54 +193,6 @@ def training_log(
             tensorboard_writer=neox_args.tensorboard_writer,
         )
 
-    # log iterations, percent of total iterations, and epochs on each domain
-    if neox_args.use_named_train_datasets:
-        assert(hasattr(neox_args, "dataset_iterations"))
-        for domain, iterations in neox_args.dataset_iterations.items():
-            tb_wandb_log(
-                f"train/iterations/{domain}",
-                iterations,
-                iteration,
-                use_wandb=neox_args.use_wandb,
-                tensorboard_writer=neox_args.tensorboard_writer,
-            )
-            tb_wandb_log(
-                f"train/percent/{domain}",
-                iterations / iteration,
-                iteration,
-                use_wandb=neox_args.use_wandb,
-                tensorboard_writer=neox_args.tensorboard_writer,
-            )
-        assert(hasattr(neox_args, "dataset_epochs"))
-        for domain, epochs in neox_args.dataset_epochs.items():
-            tb_wandb_log(
-                f"train/epochs/{domain}",
-                epochs,
-                iteration,
-                use_wandb=neox_args.use_wandb,
-                tensorboard_writer=neox_args.tensorboard_writer,
-            )
-        if data_sampling_weights:
-            for k, v in data_sampling_weights.log().items():
-                if isinstance(v, dict):
-                    for ki, vi in v.items():
-                        tb_wandb_log(
-                            f"train/{k}/{ki}",
-                            vi,
-                            iteration,
-                            use_wandb=neox_args.use_wandb,
-                            tensorboard_writer=neox_args.tensorboard_writer,
-                        )
-                else:
-                    tb_wandb_log(
-                        f"train/{k}",
-                        v,
-                        iteration,
-                        use_wandb=neox_args.use_wandb,
-                        tensorboard_writer=neox_args.tensorboard_writer,
-                    )
-
-
     # log gradient noise scale
     if neox_args.log_gradient_noise_scale:
         if noise_scale_logger.noise_scale is not None:
@@ -318,6 +270,58 @@ def training_log(
 
     if iteration % neox_args.log_interval == 0:
         # log other stuff every neox_args.log_interval iters
+
+        # log iterations, percent of total iterations, and epochs on each domain
+        if neox_args.use_named_train_datasets:
+            assert(hasattr(neox_args, "dataset_iterations"))
+            for domain, iterations in neox_args.dataset_iterations.items():
+                if isinstance(iterations, torch.Tensor):
+                    iterations = reduce_int(iterations)
+                tb_wandb_log(
+                    f"train/iterations/{domain}",
+                    iterations,
+                    iteration,
+                    use_wandb=neox_args.use_wandb,
+                    tensorboard_writer=neox_args.tensorboard_writer,
+                )
+                tb_wandb_log(
+                    f"train/percent/{domain}",
+                    iterations / iteration,
+                    iteration,
+                    use_wandb=neox_args.use_wandb,
+                    tensorboard_writer=neox_args.tensorboard_writer,
+                )
+            assert(hasattr(neox_args, "dataset_epochs"))
+            for domain, epochs in neox_args.dataset_epochs.items():
+                if isinstance(epochs, torch.Tensor):
+                    epochs = reduce_int(epochs)
+                tb_wandb_log(
+                    f"train/epochs/{domain}",
+                    epochs,
+                    iteration,
+                    use_wandb=neox_args.use_wandb,
+                    tensorboard_writer=neox_args.tensorboard_writer,
+                )
+            if data_sampling_weights:
+                for k, v in data_sampling_weights.log().items():
+                    if isinstance(v, dict):
+                        for ki, vi in v.items():
+                            tb_wandb_log(
+                                f"train/{k}/{ki}",
+                                vi,
+                                iteration,
+                                use_wandb=neox_args.use_wandb,
+                                tensorboard_writer=neox_args.tensorboard_writer,
+                            )
+                    else:
+                        tb_wandb_log(
+                            f"train/{k}",
+                            v,
+                            iteration,
+                            use_wandb=neox_args.use_wandb,
+                            tensorboard_writer=neox_args.tensorboard_writer,
+                        )
+
         elapsed_time = timers("interval time").elapsed()
         iteration_time = elapsed_time / neox_args.log_interval
         samples_per_sec = neox_args.train_batch_size / iteration_time

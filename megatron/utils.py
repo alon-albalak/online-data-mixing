@@ -27,6 +27,7 @@ import requests
 import wandb
 from wandb import UsageError
 
+import numpy as np
 import torch
 
 from deepspeed.launcher.runner import fetch_hostfile, parse_inclusion_exclusion
@@ -44,6 +45,20 @@ def reduce_losses(losses):
     reduced_losses = reduced_losses / torch.distributed.get_world_size()
     return reduced_losses
 
+def reduce_int(value):
+    """Reduce an integer across all GPUs."""
+    if isinstance(value, torch.Tensor):
+        if hasattr(torch, "atleast_1d"):
+            value = torch.atleast_1d(value)
+        elif value.ndim < 1:
+            value = value[None]
+    else:
+        value = np.atleast_1d(value)
+
+    output_tensors = [value.clone() for _ in range(torch.distributed.get_world_size())]
+    torch.distributed.all_gather(output_tensors, value)
+    concat = torch.cat(output_tensors, dim=0)
+    return concat.sum().item()
 
 def report_memory(name):
     """Simple GPU memory report."""

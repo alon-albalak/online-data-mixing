@@ -24,6 +24,7 @@ from megatron.data.indexed_dataset import make_dataset as make_indexed_dataset
 from megatron.data.blendable_dataset import BlendableDataset
 from megatron.data.gpt2_dataset import GPT2Dataset
 from megatron.data.samplers import DistributedBatchSampler
+from megatron.data.data_sampling_utils import WeightedRandomSampler, DistributedWeightedRandomSampler
 
 def find_best_local_batch_size(dataset_size, local_batch_size, world_size):
     for s in range(dataset_size, dataset_size-(world_size+1), -1):
@@ -68,6 +69,35 @@ def make_data_loader(dataset, neox_args):
         dataset, batch_sampler=batch_sampler, num_workers=num_workers, pin_memory=True
     )
 
+def make_mixed_batch_named_data_loader(datasets, weights, neox_args):
+    """Build dataloader given an input dataset."""
+    if datasets is None:
+        return None
+    # Data parallel arguments.
+    world_size = mpu.get_data_parallel_world_size()
+    rank = mpu.get_data_parallel_rank()
+    # global_batch_size = neox_args.batch_size * world_size
+    num_workers = neox_args.num_workers
+
+    generator = None
+
+    assert isinstance(datasets, dict)
+    if world_size <= 1:
+        generator = torch.Generator()
+        generator.manual_seed(neox_args.seed)
+        sampler = WeightedRandomSampler(datasets=datasets, weights=weights, generator=generator)
+    else:
+        sampler = DistributedWeightedRandomSampler(
+            datasets=datasets, weights=weights, world_size=world_size,
+            rank=rank, seed=neox_args.seed
+        )
+
+    # concatenate datasets
+    concatenated_dataset = torch.utils.data.dataset.ConcatDataset([dataset for dataset in datasets.values()])
+    return torch.utils.data.DataLoader(
+        concatenated_dataset, batch_size=neox_args.batch_size, sampler=sampler, 
+        num_workers=num_workers, pin_memory=True
+    )
 
 def build_the_dataset(
     data_prefix,
@@ -78,7 +108,8 @@ def build_the_dataset(
     seed,
     skip_warmup,
     build_index_mappings=True,
-    max_samples=None
+    max_samples=None,
+    name_passthrough=False,
 ):
     """Build train/valid/test datasets."""
 
@@ -98,7 +129,8 @@ def build_the_dataset(
         seq_length,
         seed,
         build_index_mappings=build_index_mappings,
-        max_samples=max_samples
+        max_samples=max_samples,
+        name_passthrough=name_passthrough
     )
     return dataset
 
@@ -296,6 +328,7 @@ def build_named_datasets(
                     seed=neox_args.seed,
                     skip_warmup=(not neox_args.mmap_warmup),
                     build_index_mappings=build_index_mappings,
+                    name_passthrough = neox_args.mixed_batches
                 )
 
         if valid_path:
@@ -526,9 +559,16 @@ def build_train_valid_test_data_iterators(neox_args):
                 skip_warmup=(not neox_args.mmap_warmup),
             )
 
-        # Build dataloders.
+        dataset_names = None
         if neox_args.use_named_train_datasets:
+            dataset_names = list(train_datasets.keys())
+
+
+        # Build dataloders.
+        if neox_args.use_named_train_datasets and not neox_args.mixed_batches:
             train_dataloader = {name: make_data_loader(ds, neox_args=neox_args) for name, ds in train_datasets.items()}
+        elif neox_args.use_named_train_datasets and neox_args.mixed_batches:
+            train_dataloader = make_mixed_batch_named_data_loader(train_datasets, weights=neox_args.train_data_weights, neox_args=neox_args)
         else:
             train_dataloader = make_data_loader(train_ds, neox_args=neox_args)
 
@@ -610,13 +650,16 @@ def build_train_valid_test_data_iterators(neox_args):
                 )
 
     # Build iterators, if needed
-    if not neox_args.use_named_train_datasets:
+    if neox_args.use_named_train_datasets:
+        if neox_args.mixed_batches:
+            train_data_iterator = iter(train_dataloader)
+        else:
+            train_data_iterator = train_dataloader
+    else:
         if train_dataloader is not None:
             train_data_iterator = iter(train_dataloader)
         else:
             train_data_iterator = None
-    else:
-        train_data_iterator = train_dataloader
         
     if not neox_args.use_named_eval_datasets:
         if valid_dataloader is not None:
@@ -632,7 +675,7 @@ def build_train_valid_test_data_iterators(neox_args):
         valid_data_iterator = valid_dataloader
         test_data_iterator = test_dataloader
 
-    return train_data_iterator, valid_data_iterator, test_data_iterator
+    return train_data_iterator, valid_data_iterator, test_data_iterator, dataset_names
 
 
 def compile_helper():

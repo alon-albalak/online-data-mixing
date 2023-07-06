@@ -15,6 +15,10 @@ for k, v in zip(sys.argv[1::2], sys.argv[2::2]):
             v = int(v)
         else:
             v = float(v)
+    elif v.lower() == "true":
+        v = True
+    elif v.lower() == "false":
+        v = False
     config[k] = v
 
 print(config)

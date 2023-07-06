@@ -3,9 +3,28 @@ import numpy as np
 import math
 import random
 import torch
+import deepspeed
+from megatron import print_rank_0, mpu
+from megatron.utils import get_ltor_masks_and_position_ids, reduce_losses
+from megatron.model.gpt2_model import cross_entropy
 
-from megatron import print_rank_0
+def _get_batch(neox_args, keys, data, datatype):
+    """Support function for get_batch / get_batch pipe (to avoid code repetition)"""
+    data_b = mpu.broadcast_data(keys, data, datatype)
 
+    # Unpack.
+    tokens_ = data_b["text"].long()
+    labels = tokens_[:, 1:].contiguous()
+    tokens = tokens_[:, :-1].contiguous()
+
+    # Get the masks and position ids.
+    attention_mask, loss_mask, position_ids = get_ltor_masks_and_position_ids(
+        data=tokens,
+        eod_token=neox_args.tokenizer.eod,
+        eod_mask_loss=neox_args.eod_mask_loss,
+    )
+
+    return tokens, labels, loss_mask, attention_mask, position_ids
 
 class WeightedRandomSampler(torch.utils.data.Sampler):
     datasets: Dict[str, torch.utils.data.Dataset]
@@ -261,15 +280,17 @@ class DynamicDataSamplingWeight(BaseDataSamplingWeight):
         update_frequency: Optional[int] = 0,
         update_method: Optional[str] = None,
         internal_updates: Optional[bool] = False,
+        **kwargs,
     ):
         super().__init__(weights=weights)
+        assert(update_frequency > 0)
         self.dataset_names = dataset_names
         self.update_scheduler = UpdateScheduler(
             warmup_steps=warmup_steps,
             update_frequency=update_frequency,
         )
         self.update_method = update_method
-        self.weight_updater = get_weight_updater(update_method, dataset_names, weights)
+        self.weight_updater = get_weight_updater(update_method, dataset_names, weights, **kwargs)
         self.internal_updates = internal_updates
         
     def update(self, iteration: int, **kwargs):
@@ -373,10 +394,72 @@ class Exp3WeightUpdater:
         self.prev_eps = self.eps
         self.eps = min(1/self.num_datasets, math.sqrt(math.log(self.num_datasets)/(self.num_datasets*iteration)))
 
+class NaiveValidationWeightUpdater:
+    def __init__(
+            self,
+            dataset_names: List[str],
+            weights: List[float],
+            reward_dataloaders: List,
+            neox_args,
+            ):
+        self.neox_args = neox_args
+        self.dataset_names = dataset_names
+        self.dataset_map = {name: i for i, name in enumerate(dataset_names)}
+        self.num_datasets = len(dataset_names)
+        total_weights = np.sum(weights)
+        self._probabilities = {name: weight/total_weights for name, weight in zip(dataset_names, weights)}
+        self._rewards = {name: 0.0 for name in dataset_names}
+        self.reward_dataloaders = reward_dataloaders
+        self.reward_data_iterators = {name: iter(dataloader) for name, dataloader in reward_dataloaders.items()}
+        self.vars_to_log = ["_probabilities"]
+
+    def update(self, iteration: int, model) -> List[float]:
+        model.eval()
+        keys = ["text"]
+        datatype = torch.int64
+        with torch.no_grad():
+            for name, iterator in self.reward_data_iterators.items():
+                try:
+                    batch = next(iterator)
+                except StopIteration:
+                    # reset iterator
+                    self.reward_data_iterators[name] = iter(self.reward_dataloaders[name])
+                    batch = next(self.reward_data_iterators[name])
+                
+
+                tokens, labels, loss_mask, attention_mask, position_ids = _get_batch(
+                    neox_args=self.neox_args,
+                    keys=keys,
+                    data=batch,
+                    datatype=datatype,
+                )
+
+                outputs = model((tokens, position_ids, attention_mask))
+                reward = cross_entropy(
+                    outputs, (labels, loss_mask), _fp16=self.neox_args.fp16_lm_cross_entropy
+                )
+                self._rewards[name] = reduce_losses([reward]).mean().item()
+
+                # When contiguous memory optimizations are enabled, the buffers
+                # allocated by the optimizations are deallocated during backward pass
+                # in the absence of backward pass the buffers should be reset after each
+                # forward pass
+                if self.neox_args.deepspeed and self.neox_args.deepspeed_activation_checkpointing:
+                    deepspeed.checkpointing.reset()
         
-def get_weight_updater(update_method: str, dataset_names, weights):
+        total_rewards = sum(self._rewards.values())
+        for name in self.dataset_names:
+            self._probabilities[name] = self._rewards[name]/total_rewards
+        model.train()
+        return list(self._probabilities.values())
+
+def get_weight_updater(update_method: str, dataset_names, weights, **kwargs):
     if update_method == "exp3":
         return Exp3WeightUpdater(dataset_names=dataset_names, weights=weights)
+    elif update_method == "naive_validation":
+        return NaiveValidationWeightUpdater(dataset_names=dataset_names, weights=weights,
+                                            reward_dataloaders=kwargs["reward_dataloaders"],
+                                            neox_args=kwargs["neox_args"])
 
 
 def get_data_sampling_weighter(
@@ -384,7 +467,8 @@ def get_data_sampling_weighter(
         weights: List[float],
         warmup_steps: Optional[int] = 0,
         update_frequency: Optional[int] = 0,
-        update_method: Optional[str] = None):
+        update_method: Optional[str] = None,
+        **kwargs):
     """
     Returns a data sampling weighter based on the provided arguments.
     """
@@ -398,4 +482,5 @@ def get_data_sampling_weighter(
         warmup_steps=warmup_steps,
         update_frequency=update_frequency,
         update_method=update_method,
+        **kwargs
     )

@@ -60,6 +60,10 @@ from megatron.data.data_sampling_utils import get_data_sampling_weighter
 
 from random import choices
 
+REQUIRES_VALID_DATASET=[
+    "naive_validation"
+]
+
 def pretrain(neox_args):
     """Main training program.
 
@@ -890,14 +894,23 @@ def train_named_datasets_mixed_batch(
     # if using named train datasets, prepare dataloaders, dataiterators and dicts to track iterations and epochs
     neox_args.dataset_iterations = {name: torch.tensor(0.0).to(torch.cuda.current_device()) for name in dataset_names}
     neox_args.dataset_epochs = {name: 0 for name in dataset_names}
+    data_sampler_kwargs = {}
+    if neox_args.data_sampling_method in REQUIRES_VALID_DATASET:
+        # initialize validation data iterators with slightly different seed
+        neox_args.seed += 1
+        (_, reward_dataloaders, _, _) = build_train_valid_test_data_iterators(neox_args=neox_args)
+        neox_args.seed -= 1
+        data_sampler_kwargs['reward_dataloaders'] = reward_dataloaders
+        data_sampler_kwargs['neox_args'] = neox_args
+
     data_sampling_weights = get_data_sampling_weighter(
         dataset_names=dataset_names,
         weights=neox_args.train_data_weights,
         warmup_steps=neox_args.data_sampling_warmup_steps,
         update_frequency=neox_args.data_sampling_update_frequency,
-        update_method=neox_args.data_sampling_method
+        update_method=neox_args.data_sampling_method,
+        **data_sampler_kwargs
         )
-
     timers("interval time").start()
     report_memory_flag = True
 
@@ -930,14 +943,6 @@ def train_named_datasets_mixed_batch(
             lr = optimizer.param_groups[0].get("lr", 0)
         else:
             lr = 0
-
-
-        # ALON: TODO - implement data sampling weights update
-        # update data sampling weights
-        # reward = loss_dict["lm_loss"].item()
-        # timers("data sampling update").start()
-        # data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":reward})
-        # timers("data sampling update").stop()
 
         # Logging.
         report_memory_flag = training_log(
@@ -994,6 +999,12 @@ def train_named_datasets_mixed_batch(
                 )
             )
             sys.exit()
+
+        timers("data sampling update").start()
+        if neox_args.data_sampling_method in REQUIRES_VALID_DATASET:
+            data_sampling_weights.update(iteration, **{"model":model})
+        train_data_iterator._index_sampler.sampler.weights = data_sampling_weights()
+        timers("data sampling update").stop()
 
     return iteration
 

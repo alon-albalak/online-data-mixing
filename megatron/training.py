@@ -720,6 +720,8 @@ def train(
             update_frequency=neox_args.data_sampling_update_frequency,
             update_method=neox_args.data_sampling_method
             )
+    else:
+        data_sampling_weights = None
 
     timers("interval time").start()
     report_memory_flag = True
@@ -802,10 +804,11 @@ def train(
             lr = 0
 
         # update data sampling weights
-        reward = loss_dict["lm_loss"].item()
-        timers("data sampling update").start()
-        data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":reward})
-        timers("data sampling update").stop()
+        if neox_args.use_named_train_datasets:
+            reward = loss_dict["lm_loss"].item()
+            timers("data sampling update").start()
+            data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":reward})
+            timers("data sampling update").stop()
 
         # Logging.
         report_memory_flag = training_log(

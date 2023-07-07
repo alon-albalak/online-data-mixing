@@ -20,7 +20,7 @@ model_step = get_step_from_path(args.config_path)
 with open(args.config_path, "r") as f:
     config = json.load(f)
 
-if not hasattr(config, "seed"):
+if "seed" not in config.keys():
     config["seed"] = 1234
 
 config["wandb_run_name"] = f"seed{config['seed']}_eval"

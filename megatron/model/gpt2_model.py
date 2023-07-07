@@ -69,6 +69,27 @@ def cross_entropy(output, labels, _fp16=False):
     loss = torch.sum(losses.view(-1) * loss_mask) / loss_mask.sum()
     return loss
 
+def cross_entropy_per_sample(output, labels, _fp16=False):
+    """From pretrain_gpt2:forward_step()"""
+    """
+    if self.fp16_lm_cross_entropy:
+        assert output.dtype == torch.half
+        loss = mpu.vocab_parallel_cross_entropy(output, labels)
+    else:
+        loss = mpu.vocab_parallel_cross_entropy(output.float(), labels)
+        return loss
+    """
+    labels, loss_mask = labels[0], labels[1]
+    if _fp16:
+        assert output.dtype == torch.half and loss_mask.dtype == torch.half
+        losses = mpu.vocab_parallel_cross_entropy(output.contiguous(), labels)
+    else:
+        losses = mpu.vocab_parallel_cross_entropy(output.float().contiguous(), labels)
+
+    loss = losses * loss_mask
+    per_sample_loss = torch.sum(loss, dim=-1) / torch.sum(loss_mask, dim=-1)
+    return per_sample_loss
+
 
 def _pre_transformer_block(args):
     # data format change for hidden_states to avoid explicit tranposes : [b s h] --> [s b h]

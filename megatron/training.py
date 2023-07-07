@@ -54,7 +54,7 @@ from megatron.utils import (
     get_total_params,
     CharCounter,
 )
-from megatron.model.gpt2_model import cross_entropy
+from megatron.model.gpt2_model import cross_entropy, cross_entropy_per_sample
 from eval_tasks import run_eval_harness
 from megatron.data.data_sampling_utils import get_data_sampling_weighter
 
@@ -644,6 +644,13 @@ def train_step_named_datasets_mixed_batch(neox_args, timers, data_iterator, mode
             )
             timers("batch generator").stop()
             outputs = model((tokens, position_ids, attention_mask))
+            
+            # TODO: implement per_sample_loss for mixed batch
+            # per_sample_loss = cross_entropy_per_sample(
+            #     outputs, (labels, loss_mask), _fp16=neox_args.fp16_lm_cross_entropy
+            # )
+            # loss = per_sample_loss.sum()
+
             loss = cross_entropy(
                 outputs, (labels, loss_mask), _fp16=neox_args.fp16_lm_cross_entropy
             )

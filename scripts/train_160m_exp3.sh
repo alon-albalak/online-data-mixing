@@ -19,5 +19,5 @@ for SEED in ${SEEDS[@]}; do
     python3 deepy.py train.py ${CONFIGS} ${RUN_SPECIFIC_CONFIG} 2>&1 | tee outputs/${RUN_NAME}.log
 
     # evaluate
-    bash gpt-neox/scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_160m_1gpu.yml
+    bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_160m_1gpu.yml
 done

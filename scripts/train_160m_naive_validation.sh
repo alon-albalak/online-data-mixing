@@ -2,10 +2,10 @@
 CONFIGS="alon_configs/data/pile.yml alon_configs/init.yml alon_configs/models/160m.yml alon_configs/eval_tasks.yml"
 # Doesn't include alon_configs/parallelism.yml
 
-WANDB_GROUP="160m_ods_naive_validation"
+WANDB_GROUP="160m_ods_naive_validation_10"
 DATA_SAMPLING_METHOD="naive_validation"
 DATA_SAMPLING_WARMUP_STEPS="2000"
-DATA_SAMPLING_UPDATE_FREQUENCY="1"
+DATA_SAMPLING_UPDATE_FREQUENCY="10"
 MIXED_BATCHES=true
 
 SEEDS=(1234 42 100 222)
@@ -20,5 +20,5 @@ for SEED in ${SEEDS[@]}; do
     python3 deepy.py train.py ${CONFIGS} ${RUN_SPECIFIC_CONFIG} 2>&1 | tee outputs/${RUN_NAME}.log
 
     # evaluate
-    bash gpt-neox/scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_160m_1gpu.yml
+    bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_160m_1gpu.yml
 done

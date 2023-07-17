@@ -409,6 +409,7 @@ class NaiveValidationWeightUpdater:
         total_weights = np.sum(weights)
         self._probabilities = {name: weight/total_weights for name, weight in zip(dataset_names, weights)}
         self._rewards = {name: 0.0 for name in dataset_names}
+        self._normalized_rewards = {name: 0.0 for name in dataset_names}
         self.reward_dataloaders = reward_dataloaders
         self.reward_data_iterators = {name: iter(dataloader) for name, dataloader in reward_dataloaders.items()}
         self.vars_to_log = ["_probabilities"]
@@ -447,9 +448,16 @@ class NaiveValidationWeightUpdater:
                 if self.neox_args.deepspeed and self.neox_args.deepspeed_activation_checkpointing:
                     deepspeed.checkpointing.reset()
         
-        total_rewards = sum(self._rewards.values())
+        # normalize rewards
+        max_reward = max(self._rewards.values())
+        min_reward = min(self._rewards.values())
         for name in self.dataset_names:
-            self._probabilities[name] = self._rewards[name]/total_rewards
+            self._normalized_rewards[name] = (self._rewards[name] - min_reward)/(max_reward - min_reward)
+
+        # update probabilities
+        total_rewards = sum([math.exp(r) for r in self._normalized_rewards.values()])
+        for name in self.dataset_names:
+            self._probabilities[name] = math.exp(self._normalized_rewards[name])/total_rewards
         model.train()
         return list(self._probabilities.values())
 

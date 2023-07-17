@@ -285,7 +285,7 @@ def training_log(
                     tensorboard_writer=neox_args.tensorboard_writer,
                 )
                 if neox_args.mixed_batches:
-                    percent = iterations / ( iteration * neox_args.global_batch_size )
+                    percent = iterations / ( iteration * neox_args.train_batch_size )
                 else:
                     percent = iterations / iteration
                 tb_wandb_log(

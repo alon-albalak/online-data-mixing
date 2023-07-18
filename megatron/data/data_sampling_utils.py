@@ -406,13 +406,17 @@ class NaiveValidationWeightUpdater:
         self.dataset_names = dataset_names
         self.dataset_map = {name: i for i, name in enumerate(dataset_names)}
         self.num_datasets = len(dataset_names)
+        self.weights = weights
         total_weights = np.sum(weights)
         self._probabilities = {name: weight/total_weights for name, weight in zip(dataset_names, weights)}
         self._rewards = {name: 0.0 for name in dataset_names}
-        self._normalized_rewards = {name: 0.0 for name in dataset_names}
+        self._cumulative_estimated_reward = {name: 0.0 for name in dataset_names}
+        # self._normalized_rewards = {name: 0.0 for name in dataset_names}
         self.reward_dataloaders = reward_dataloaders
         self.reward_data_iterators = {name: iter(dataloader) for name, dataloader in reward_dataloaders.items()}
-        self.vars_to_log = ["_probabilities"]
+        self.eps = 1/self.num_datasets
+        self.prev_eps = None
+        self.vars_to_log = ["_probabilities", "_cumulative_estimated_reward"]
 
     def update(self, iteration: int, model) -> List[float]:
         model.eval()
@@ -448,16 +452,37 @@ class NaiveValidationWeightUpdater:
                 if self.neox_args.deepspeed and self.neox_args.deepspeed_activation_checkpointing:
                     deepspeed.checkpointing.reset()
         
-        # normalize rewards
+        # update cumulative estimated (normalized) rewards
         max_reward = max(self._rewards.values())
         min_reward = min(self._rewards.values())
         for name in self.dataset_names:
-            self._normalized_rewards[name] = (self._rewards[name] - min_reward)/(max_reward - min_reward)
+            # self._normalized_rewards[name] = (self._rewards[name] - min_reward)/(max_reward - min_reward)
+            self._cumulative_estimated_reward[name] += (self._rewards[name] - min_reward)/(max_reward - min_reward)
+
+        # calculate epsilons
+        self.prev_eps = self.eps
+        self.eps = min(1/self.num_datasets, math.sqrt(math.log(self.num_datasets)/(self.num_datasets*iteration)))
+
+        # calculate scaling factor
+        total_estimated_rewards = sum([math.exp(r*self.prev_eps) for r in self._cumulative_estimated_reward.values()])
+        scaling_factor = (1-self.num_datasets*self.eps)/total_estimated_rewards
 
         # update probabilities
-        total_rewards = sum([math.exp(r) for r in self._normalized_rewards.values()])
+        # total_rewards = sum([math.exp(r) for r in self._normalized_rewards.values()])
+        # for name in self.dataset_names:
+        #     self._probabilities[name] = math.exp(self._normalized_rewards[name])/total_rewards
+        # model.train()
+        # return list(self._probabilities.values())
+
+        # update weights
         for name in self.dataset_names:
-            self._probabilities[name] = math.exp(self._normalized_rewards[name])/total_rewards
+            self.weights[self.dataset_map[name]] = math.exp(self._cumulative_estimated_reward[name]*self.prev_eps)*scaling_factor + self.eps
+
+        # update probabilities
+        total_weights = np.sum(self.weights)
+        for name in self.dataset_names:
+            self._probabilities[name] = self.weights[self.dataset_map[name]]/total_weights
+
         model.train()
         return list(self._probabilities.values())
 

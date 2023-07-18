@@ -1,7 +1,11 @@
 MODEL_CONFIG=$1
 EVAL_CONFIG=$2
 
-EVAL_TASKS="lambada_openai piqa winogrande arc_easy sciq wikitext openbookqa"
+EVAL_TASKS="lambada_openai piqa winogrande wsc arc_easy sciq logiqa wikitext openbookqa"
+# Temporarily not using triviaqa because it can't download?
+# Not using:
+#   webqs (web questions) because our models have very poor performance (0.005 accuracy)
+#   squad2 because it leads to: AttributeError: 'SequentialWrapper' object has no attribute 'clear_cache' 
 
 # MODEL_CONFIG should be from the output of the training script
 #   For example, gpt-neox/outputs/160m_doremi_280_seed42/global_step100000/configs/160m_doremi_280_seed42.yml

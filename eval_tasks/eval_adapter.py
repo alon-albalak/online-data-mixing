@@ -478,11 +478,11 @@ def run_eval_harness(
         use_cache=False,
     )
 
-    del adapter
-    gc.collect()
-    torch.cuda.empty_cache()
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
+    # del adapter
+    # gc.collect()
+    # torch.cuda.empty_cache()
+    # if torch.distributed.is_initialized():
+    #     torch.distributed.barrier()
 
 
     return results

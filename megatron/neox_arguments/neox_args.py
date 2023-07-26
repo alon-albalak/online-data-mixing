@@ -1023,6 +1023,14 @@ class NeoXArgsDataSampling(NeoXArgsTemplate):
     """
     Whether to use mixed batches for data sampling.
     """
+    mixed_minibatches: bool = False
+    """
+    Whether to use mixed minibatches for data sampling.
+    """
+    batch_normalized_reward: bool = False
+    """
+    Whether to use normalized reward for data sampling.
+    """
 
 
 @dataclass

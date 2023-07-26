@@ -335,11 +335,6 @@ class Exp3WeightUpdater:
         Updates the weights based on the provided reward.
         """
 
-        loss = reward
-        # scale reward
-        # reward = max(math.log(reward), 0)
-        reward = reward/10
-
         # print(f"Rank: {torch.distributed.get_rank()} -- dataset_name: {dataset_name} -- reward: {reward}"
         #       f" -- eps {self.eps} -- prev_eps {self.prev_eps}")
 
@@ -371,7 +366,7 @@ class Exp3WeightUpdater:
         for name in self.dataset_names:
             self._probabilities[name] = self.weights[self.dataset_map[name]]/total_weights
 
-        # print(f"Rank: {torch.distributed.get_rank()} -- loss {loss} -- reward: {reward} -- eps {self.eps} -- scaling_factor {scaling_factor}"
+        # print(f"Rank: {torch.distributed.get_rank()} -- reward: {reward} -- eps {self.eps} -- scaling_factor {scaling_factor}"
         #       f" -- cumulative_estimated_reward {self._cumulative_estimated_reward} -- weights {self.weights} -- probabilities {self._probabilities}"
         #       f" -- total_weights {total_weights}"
         #       )
@@ -479,6 +474,7 @@ class NaiveValidationWeightUpdater:
             self.weights[self.dataset_map[name]] = math.exp(self._cumulative_estimated_reward[name]*self.prev_eps)*scaling_factor + self.eps
 
         # update probabilities
+        # ALON: total_weights should be summing up to 1, can possibly skip the following step
         total_weights = np.sum(self.weights)
         for name in self.dataset_names:
             self._probabilities[name] = self.weights[self.dataset_map[name]]/total_weights
@@ -493,7 +489,7 @@ def get_weight_updater(update_method: str, dataset_names, weights, **kwargs):
         return NaiveValidationWeightUpdater(dataset_names=dataset_names, weights=weights,
                                             reward_dataloaders=kwargs["reward_dataloaders"],
                                             neox_args=kwargs["neox_args"])
-
+                                                     
 
 def get_data_sampling_weighter(
         dataset_names: List[str],

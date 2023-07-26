@@ -58,7 +58,7 @@ from megatron.model.gpt2_model import cross_entropy, cross_entropy_per_sample
 from eval_tasks import run_eval_harness
 from megatron.data.data_sampling_utils import get_data_sampling_weighter
 
-from random import choices
+import random
 
 REQUIRES_VALID_DATASET=[
     "naive_validation"
@@ -122,6 +122,17 @@ def pretrain(neox_args):
 
         if neox_args.use_named_train_datasets and neox_args.mixed_batches:
             iteration = train_named_datasets_mixed_batch(
+                dataset_names=dataset_names,
+                neox_args=neox_args,
+                timers=timers,
+                model=model,
+                optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
+                train_data_iterator=train_data_iterator,
+                valid_data_iterator=valid_data_iterator,
+            )
+        elif neox_args.use_named_train_datasets and neox_args.mixed_minibatches:
+            iteration = train_named_datasets_mixed_minibatch(
                 dataset_names=dataset_names,
                 neox_args=neox_args,
                 timers=timers,
@@ -736,7 +747,7 @@ def train(
 
         if neox_args.use_named_train_datasets:
             # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} -- WEIGHT {neox_args.train_data_weights}")
-            batch_name = choices(dataset_names, weights=data_sampling_weights(), k=1)[0]
+            batch_name = random.choices(dataset_names, weights=data_sampling_weights(), k=1)[0]
             # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} USING DATASET {batch_name}")
             batch_iterator = train_data_iterator[batch_name]
         else:
@@ -1016,6 +1027,302 @@ def train_named_datasets_mixed_batch(
         train_data_iterator._index_sampler.sampler.weights = data_sampling_weights()
         timers("data sampling update").stop()
 
+    return iteration
+
+def get_batch_names(neox_args, dataset_names, data_sampling_weights, iteration):
+    # iterate over full batch size, then split to each device
+    batch_names = random.choices(dataset_names, weights=data_sampling_weights(), k=neox_args.world_size * neox_args.gradient_accumulation_steps)
+
+    # print(f"ITERATION: {iteration} -- RANK: {torch.distributed.get_rank()} -- BATCH NAMES: {batch_names}")
+    # only keep indices for this rank
+    local_batches = batch_names[torch.distributed.get_rank()::neox_args.world_size]
+
+    # create a dict counting the number of times each dataset appears in the batch
+    batch_name_counts = {name: batch_names.count(name) for name in dataset_names if name in batch_names}
+    # print(f"ITERATION: {iteration} -- RANK: {torch.distributed.get_rank()} -- BATCH NAMES: {batch_names} -- BATCH COUNTS: {batch_name_counts} -- LOCAL BATCHES: {local_batches}")
+    return local_batches, batch_name_counts
+
+def forward_step_only(neox_args, timers, data_iterator, model):
+    """Forward step."""
+
+    # Forward model for one step.
+    timers("forward").start()
+    loss = forward_step(
+        neox_args=neox_args,
+        timers=timers,
+        data_iterator=data_iterator,
+        model=model,
+    )
+    timers("forward").stop()
+
+    return loss
+
+def backward_step_only(neox_args, timers, losses, model, optimizer):
+    for loss in losses:
+        timers("backward").start()
+        backward_step(
+            neox_args=neox_args,
+            timers=timers,
+            optimizer=optimizer,
+            model=model,
+            loss=loss,
+        )
+        timers("backward").stop()
+        
+        # Update parameters
+        timers("optimizer").start()
+        if neox_args.deepspeed:
+            model.step()
+        else:
+            raise ValueError("Must be using deepspeed to run neox")
+        timers("optimizer").stop()
+
+    reduced_loss = {
+        "lm_loss": reduce_losses(losses).mean()
+    }  # reduces losses across machines for logging
+
+    if neox_args.precision == "fp16" and model.optimizer.overflow:
+        skipped_iter = 1
+    else:
+        skipped_iter = 0
+
+    return reduced_loss, skipped_iter
+
+def single_step_validation(neox_args, model, data_iterator):
+    model.eval()
+    with torch.no_grad():
+        try:
+            batch = next(data_iterator)
+        except StopIteration:
+            raise StopIteration
+        tokens, labels, loss_mask, attention_mask, position_ids = _get_batch(
+            neox_args = neox_args,
+            tokenizer=neox_args.tokenizer,
+            keys=["text"],
+            data=batch,
+            datatype=torch.int64
+        )
+        outputs = model((tokens, position_ids, attention_mask))
+        loss = cross_entropy(
+            outputs, (labels, loss_mask), _fp16=neox_args.fp16_lm_cross_entropy
+        )
+        # When contiguous memory optimizations are enabled, the buffers
+        # allocated by the optimizations are deallocated during backward pass
+        # in the absence of backward pass the buffers should be reset after each
+        # forward pass
+        if neox_args.deepspeed and neox_args.deepspeed_activation_checkpointing:
+            deepspeed.checkpointing.reset()
+    model.train()
+    return loss
+            
+
+def train_named_datasets_mixed_minibatch(
+    dataset_names,
+    neox_args,
+    timers,
+    model,
+    optimizer,
+    lr_scheduler,
+    train_data_iterator,
+    valid_data_iterator,
+):
+    """Train the model function."""
+
+    # Turn on training mode which enables dropout.
+    model.train()
+
+    # Tracking loss.
+    total_loss_dict = {}
+
+    # Iterations.
+    iteration = neox_args.iteration
+
+    # if using named train datasets, prepare dataloaders, dataiterators and dicts to track iterations and epochs
+    neox_args.dataset_iterations = {name: torch.tensor(0.0).to(torch.cuda.current_device()) for name in dataset_names}
+    train_dataloaders = {name: dataloader for name, dataloader in train_data_iterator.items()}
+    train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
+    neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
+    data_sampler_kwargs = {}
+    # initialize validation data iterators with slightly different seed
+    neox_args.seed += 1
+    (_, reward_dataloaders, _, _) = build_train_valid_test_data_iterators(neox_args=neox_args)
+    neox_args.seed -= 1
+    reward_data_iterators = {name: iter(dataloader) for name, dataloader in reward_dataloaders.items()}
+
+    data_sampling_weights = get_data_sampling_weighter(
+        dataset_names=dataset_names,
+        weights=neox_args.train_data_weights,
+        warmup_steps=neox_args.data_sampling_warmup_steps,
+        update_frequency=neox_args.data_sampling_update_frequency,
+        update_method=neox_args.data_sampling_method,
+        **data_sampler_kwargs
+        )
+    timers("interval time").start()
+    report_memory_flag = True
+
+    # get noise scale logger (if neox_args.log_gradient_noise_scale is True)
+    noise_scale_logger = get_noise_scale_logger(neox_args)
+
+    # to monitor if we've skipped many iterations in a row and trigger an early exit
+    overflow_monitor = OverflowMonitor(optimizer)
+
+    while iteration < neox_args.train_iters:
+
+        local_batch_names, batch_name_counts = get_batch_names(neox_args, dataset_names, data_sampling_weights, iteration)
+        batch_losses = {b: torch.tensor(0.0, device=torch.cuda.current_device()) for b in batch_name_counts.keys()}
+        reward_losses = {b: torch.tensor(0.0, device=torch.cuda.current_device()) for b in batch_name_counts.keys()}
+        losses = []
+
+        for batch_name in local_batch_names:
+            batch_iterator = train_data_iterator[batch_name]
+
+            # use try/except to allow for restarting a dataset
+            try:
+                loss = forward_step_only(
+                    neox_args=neox_args,
+                    timers=timers,
+                    data_iterator=batch_iterator,
+                    model=model,
+                )
+
+            except StopIteration:
+                # stop timers from attempted iteration
+                timers("forward").stop()
+                timers("batch generator").stop()
+                # reinitialize dataset
+                train_dataloaders[batch_name].dataset._reinitialize()
+                # update completed epochs
+                neox_args.dataset_epochs[batch_name] = train_dataloaders[batch_name].dataset._completed_epochs
+                # create iterator from dataloader
+                train_data_iterator[batch_name] = iter(train_dataloaders[batch_name])
+                # continue with new batch
+                batch_iterator = train_data_iterator[batch_name]
+                loss = forward_step_only(
+                    neox_args=neox_args,
+                    timers=timers,
+                    data_iterator=batch_iterator,
+                    model=model,
+                )
+
+            batch_losses[batch_name] += loss.item()
+            losses.append(loss)
+
+            timers("data sampling update").start()
+            # run validation on a single batch to get reward
+            try:
+                reward_loss = single_step_validation(neox_args, model, reward_data_iterators[batch_name])
+            except StopIteration:
+                reward_data_iterators[batch_name] = iter(reward_dataloaders[batch_name])
+                # continue with new batch
+                reward_loss = single_step_validation(neox_args, model, reward_data_iterators[batch_name])
+            timers("data sampling update").stop()
+
+            # print(f"ITERATION: {iteration} -- RANK: {torch.distributed.get_rank()} -- BATCH NAME: {batch_name} -- REWARD LOSS: {reward_loss.item()}")
+            reward_losses[batch_name] += reward_loss.item()
+
+        loss_dict, skipped_iter = backward_step_only(
+            neox_args=neox_args,
+            timers=timers,
+            losses=losses,
+            model=model,
+            optimizer=optimizer,
+        )
+        iteration += 1
+
+        neox_args.dataset_iterations[batch_name] += 1
+
+        overflow_monitor.check(skipped_iter)  # check for repeated overflow
+        if neox_args.log_gradient_noise_scale:  # log noise scale if applicable
+            noise_scale_logger.update()
+
+        # get learning rate (if present) - if doing soft prompt tuning + pipe parallel, you
+        # may have no tunable parameters on a specific rank
+        if optimizer.param_groups:
+            lr = optimizer.param_groups[0].get("lr", 0)
+        else:
+            lr = 0
+
+        # Logging.
+        report_memory_flag = training_log(
+            neox_args=neox_args,
+            timers=timers,
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=lr,
+            iteration=iteration,
+            loss_scale=optimizer.cur_scale if neox_args.precision == "fp16" else None,
+            report_memory_flag=report_memory_flag,
+            skipped_iter=skipped_iter,
+            model=model,
+            optimizer=optimizer,
+            noise_scale_logger=noise_scale_logger,
+            data_sampling_weights=data_sampling_weights
+        )
+
+        # Checkpointing
+        if neox_args.save and iteration in neox_args.save_iters:
+            save_checkpoint(
+                neox_args=neox_args,
+                iteration=iteration,
+                model=model,
+                optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
+            )
+
+        # Evaluation
+        if (
+            neox_args.eval_interval
+            and iteration % neox_args.eval_interval == 0
+            and neox_args.do_valid
+        ):
+            prefix = "iteration {}".format(iteration)
+            evaluate_named_datasets_and_print_results(
+                neox_args=neox_args,
+                prefix=prefix,
+                forward_step_func=forward_step,
+                data_iterators=valid_data_iterator,
+                model=model,
+                iteration=iteration,
+                verbose=False,
+                timers=timers,
+            )
+
+        if neox_args.exit_interval and iteration % neox_args.exit_interval == 0:
+            torch.distributed.barrier()
+            time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            rank = torch.distributed.get_rank()
+            print_rank_0(
+                "rank: {} | time: {} | exiting the program at iteration {}".format(
+                    rank, time_str, iteration
+                )
+            )
+            sys.exit()
+
+        timers("data sampling update").start()
+        if neox_args.batch_normalized_reward:
+            generalization_reward = {}
+            for batch_name in batch_name_counts.keys():
+                if torch.distributed.is_initialized():
+                    torch.distributed.all_reduce(reward_losses[batch_name])
+                    torch.distributed.all_reduce(batch_losses[batch_name])
+                # rescale losses by number of batches
+                reward_losses[batch_name] /= batch_name_counts[batch_name]
+                batch_losses[batch_name] /= batch_name_counts[batch_name]
+                generalization_reward[batch_name] = reward_losses[batch_name] - batch_losses[batch_name]
+            total_reward = sum(generalization_reward.values())
+            for batch_name in batch_name_counts.keys():
+                data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":generalization_reward[batch_name]/total_reward})
+        else:
+            for batch_name in batch_name_counts.keys():
+                if torch.distributed.is_initialized():
+                    torch.distributed.all_reduce(reward_losses[batch_name])
+                    torch.distributed.all_reduce(batch_losses[batch_name])
+                # rescale losses by number of batches
+                reward_losses[batch_name] /= batch_name_counts[batch_name]
+                batch_losses[batch_name] /= batch_name_counts[batch_name]
+                generalization_reward = reward_losses[batch_name] - batch_losses[batch_name]
+                data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":generalization_reward})
+        timers("data sampling update").stop()
     return iteration
 
 def evaluate(

@@ -1190,7 +1190,8 @@ def train_named_datasets_mixed_minibatch(
                 timers("forward").stop()
                 timers("batch generator").stop()
                 # reinitialize dataset
-                train_dataloaders[batch_name].dataset._reinitialize()
+                train_dataloaders[batch_name].dataset.seed += 1
+                train_dataloaders[batch_name].dataset._reinitialize(override_process_dataset=True)
                 # update completed epochs
                 neox_args.dataset_epochs[batch_name] = train_dataloaders[batch_name].dataset._completed_epochs
                 # create iterator from dataloader

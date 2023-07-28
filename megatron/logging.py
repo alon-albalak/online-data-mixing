@@ -286,6 +286,8 @@ def training_log(
                 )
                 if neox_args.mixed_batches:
                     percent = iterations / ( iteration * neox_args.train_batch_size )
+                elif neox_args.mixed_minibatches:
+                    percent = iterations / ( iteration * (neox_args.train_batch_size / neox_args.train_micro_batch_size_per_gpu) )
                 else:
                     percent = iterations / iteration
                 tb_wandb_log(
@@ -325,7 +327,6 @@ def training_log(
                             use_wandb=neox_args.use_wandb,
                             tensorboard_writer=neox_args.tensorboard_writer,
                         )
-
         elapsed_time = timers("interval time").elapsed()
         iteration_time = elapsed_time / neox_args.log_interval
         samples_per_sec = neox_args.train_batch_size / iteration_time

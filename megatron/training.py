@@ -1221,6 +1221,8 @@ def train_named_datasets_mixed_minibatch(
             # print(f"ITERATION: {iteration} -- RANK: {torch.distributed.get_rank()} -- BATCH NAME: {batch_name} -- REWARD LOSS: {reward_loss.item()}")
             reward_losses[batch_name] += reward_loss.item()
 
+            neox_args.dataset_iterations[batch_name] += 1
+
         loss_dict, skipped_iter = backward_step_only(
             neox_args=neox_args,
             timers=timers,
@@ -1229,8 +1231,6 @@ def train_named_datasets_mixed_minibatch(
             optimizer=optimizer,
         )
         iteration += 1
-
-        neox_args.dataset_iterations[batch_name] += 1
 
         overflow_monitor.check(skipped_iter)  # check for repeated overflow
         if neox_args.log_gradient_noise_scale:  # log noise scale if applicable

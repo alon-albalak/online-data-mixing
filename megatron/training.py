@@ -1143,11 +1143,20 @@ def train_named_datasets_mixed_minibatch(
     train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
     neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
     data_sampler_kwargs = {}
-    # initialize validation data iterators with slightly different seed
+    # initialize validation data iterators with slightly different seed, and only allow initialization on main process
     neox_args.seed += 1
+    tmp = neox_args.num_workers
+    neox_args.num_workers = 0
     (_, reward_dataloaders, _, _) = build_train_valid_test_data_iterators(neox_args=neox_args)
     neox_args.seed -= 1
     reward_data_iterators = {name: iter(dataloader) for name, dataloader in reward_dataloaders.items()}
+
+    # track running average of batch loss, reward loss, and generalization reward
+    # running_batch_loss = {name: 0.0 for name in dataset_names}
+    # running_reward_loss = {name: 0.0 for name in dataset_names}
+    # running_generalization_reward = {name: 0.0 for name in dataset_names}
+    if neox_args.scale_by_reward_loss_diff:
+        last_reward = {name: None for name in dataset_names}
 
     data_sampling_weights = get_data_sampling_weighter(
         dataset_names=dataset_names,
@@ -1157,6 +1166,8 @@ def train_named_datasets_mixed_minibatch(
         update_method=neox_args.data_sampling_method,
         **data_sampler_kwargs
         )
+    first_reward_step = True
+
     timers("interval time").start()
     report_memory_flag = True
 
@@ -1167,6 +1178,7 @@ def train_named_datasets_mixed_minibatch(
     overflow_monitor = OverflowMonitor(optimizer)
 
     while iteration < neox_args.train_iters:
+        iteration += 1
 
         local_batch_names, batch_name_counts = get_batch_names(neox_args, dataset_names, data_sampling_weights, iteration)
         batch_losses = {b: torch.tensor(0.0, device=torch.cuda.current_device()) for b in batch_name_counts.keys()}
@@ -1209,17 +1221,23 @@ def train_named_datasets_mixed_minibatch(
             losses.append(loss)
 
             timers("data sampling update").start()
-            # run validation on a single batch to get reward
-            try:
-                reward_loss = single_step_validation(neox_args, model, reward_data_iterators[batch_name])
-            except StopIteration:
-                reward_data_iterators[batch_name] = iter(reward_dataloaders[batch_name])
-                # continue with new batch
-                reward_loss = single_step_validation(neox_args, model, reward_data_iterators[batch_name])
-            timers("data sampling update").stop()
+            if data_sampling_weights.update_scheduler.requires_update(iteration):
+                if first_reward_step:
+                    # preserve some GPU space until we're done with the warmup
+                    torch.cuda.empty_cache()
+                    first_reward_step = False
+                # run validation on a single batch to get reward
+                try:
+                    reward_loss = single_step_validation(neox_args, model, reward_data_iterators[batch_name])
+                except StopIteration:
+                    reward_data_iterators[batch_name] = iter(reward_dataloaders[batch_name])
+                    # continue with new batch
+                    reward_loss = single_step_validation(neox_args, model, reward_data_iterators[batch_name])
 
-            # print(f"ITERATION: {iteration} -- RANK: {torch.distributed.get_rank()} -- BATCH NAME: {batch_name} -- REWARD LOSS: {reward_loss.item()}")
-            reward_losses[batch_name] += reward_loss.item()
+                # print(f"ITERATION: {iteration} -- RANK: {torch.distributed.get_rank()} -- BATCH NAME: {batch_name} -- REWARD LOSS: {reward_loss.item()}")
+                reward_losses[batch_name] += reward_loss.item()
+
+            timers("data sampling update").stop()
 
             neox_args.dataset_iterations[batch_name] += 1
 
@@ -1230,7 +1248,6 @@ def train_named_datasets_mixed_minibatch(
             model=model,
             optimizer=optimizer,
         )
-        iteration += 1
 
         overflow_monitor.check(skipped_iter)  # check for repeated overflow
         if neox_args.log_gradient_noise_scale:  # log noise scale if applicable
@@ -1300,30 +1317,75 @@ def train_named_datasets_mixed_minibatch(
             sys.exit()
 
         timers("data sampling update").start()
-        if neox_args.batch_normalized_reward:
-            generalization_reward = {}
-            for batch_name in batch_name_counts.keys():
-                if torch.distributed.is_initialized():
-                    torch.distributed.all_reduce(reward_losses[batch_name])
-                    torch.distributed.all_reduce(batch_losses[batch_name])
-                # rescale losses by number of batches
-                reward_losses[batch_name] /= batch_name_counts[batch_name]
-                batch_losses[batch_name] /= batch_name_counts[batch_name]
-                generalization_reward[batch_name] = reward_losses[batch_name] - batch_losses[batch_name]
-            total_reward = sum(generalization_reward.values())
-            for batch_name in batch_name_counts.keys():
-                data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":generalization_reward[batch_name]/total_reward})
-        else:
-            for batch_name in batch_name_counts.keys():
-                if torch.distributed.is_initialized():
-                    torch.distributed.all_reduce(reward_losses[batch_name])
-                    torch.distributed.all_reduce(batch_losses[batch_name])
-                # rescale losses by number of batches
-                reward_losses[batch_name] /= batch_name_counts[batch_name]
-                batch_losses[batch_name] /= batch_name_counts[batch_name]
-                generalization_reward = reward_losses[batch_name] - batch_losses[batch_name]
-                data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":generalization_reward})
+        if data_sampling_weights.update_scheduler.requires_update(iteration):
+            if neox_args.batch_normalized_reward:
+                generalization_reward = {}
+                for batch_name in batch_name_counts.keys():
+                    if torch.distributed.is_initialized():
+                        torch.distributed.all_reduce(reward_losses[batch_name])
+                        torch.distributed.all_reduce(batch_losses[batch_name])
+                    # rescale losses by number of batches
+                    reward_losses[batch_name] /= batch_name_counts[batch_name]
+                    batch_losses[batch_name] /= batch_name_counts[batch_name]
+                    generalization_reward[batch_name] = reward_losses[batch_name] - batch_losses[batch_name]
+                    if neox_args.scale_by_reward_loss_diff:
+                        if last_reward[batch_name] is not None:
+                            reward_loss_diff = last_reward[batch_name] - reward_losses[batch_name]
+                            generalization_reward[batch_name] *= reward_loss_diff
+                        last_reward[batch_name] = reward_losses[batch_name]
+                min_reward = min(generalization_reward.values())
+                max_reward = max(generalization_reward.values())
+                for batch_name in batch_name_counts.keys():
+                    normalized_reward = (generalization_reward[batch_name] - min_reward) / (max_reward - min_reward)
+                    data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":normalized_reward})
+            else:
+                for batch_name in batch_name_counts.keys():
+                    if torch.distributed.is_initialized():
+                        torch.distributed.all_reduce(reward_losses[batch_name])
+                        torch.distributed.all_reduce(batch_losses[batch_name])
+                    # rescale losses by number of batches
+                    reward_losses[batch_name] /= batch_name_counts[batch_name]
+                    batch_losses[batch_name] /= batch_name_counts[batch_name]
+                    generalization_reward = reward_losses[batch_name] - batch_losses[batch_name]
+                    if neox_args.scale_by_reward_loss_diff:
+                        if last_reward[batch_name] is not None:
+                            reward_loss_diff = last_reward[batch_name] - reward_losses[batch_name]
+                            generalization_reward *= reward_loss_diff
+                        last_reward[batch_name] = reward_losses[batch_name]
+                    data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":generalization_reward})
         timers("data sampling update").stop()
+
+        # update running means
+        # for batch_name in batch_name_counts.keys():
+        #     running_reward_loss[batch_name] = 0.95 * running_reward_loss[batch_name] + 0.05 * reward_losses[batch_name]
+        #     running_batch_loss[batch_name] = 0.95 * running_batch_loss[batch_name] + 0.05 * batch_losses[batch_name]
+        #     running_generalization_reward[batch_name] = running_reward_loss[batch_name] - running_batch_loss[batch_name]
+        # log batch and reward losses
+
+        # if iteration % 10 == 0:
+        #     for dataset_name in dataset_names:
+        #         tb_wandb_log(
+        #             f"train/batch_loss/{dataset_name}",
+        #             running_batch_loss[dataset_name],
+        #             iteration,
+        #             use_wandb=neox_args.use_wandb,
+        #             tensorboard_writer=neox_args.tensorboard_writer,
+        #         )
+        #         tb_wandb_log(
+        #             f"train/reward_loss/{dataset_name}",
+        #             running_reward_loss[dataset_name],
+        #             iteration,
+        #             use_wandb=neox_args.use_wandb,
+        #             tensorboard_writer=neox_args.tensorboard_writer,
+        #         )
+        #         # log generalization reward
+        #         tb_wandb_log(
+        #             f"train/generalization_reward/{dataset_name}",
+        #             running_generalization_reward[dataset_name],
+        #             iteration,
+        #             use_wandb=neox_args.use_wandb,
+        #             tensorboard_writer=neox_args.tensorboard_writer,
+        #         )
     return iteration
 
 def evaluate(

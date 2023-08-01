@@ -407,22 +407,6 @@ class Exp3WeightUpdater:
         #       )
 
         return list(self._probabilities.values())
-    
-    def internal_update(self, dataset_name: str, reward: float, iteration: int) -> None:
-
-        reward = reward/10
-
-        # print(f"Rank: {torch.distributed.get_rank()} -- dataset_name: {dataset_name} -- reward: {reward}"
-        #       f" -- eps {self.eps} -- prev_eps {self.prev_eps}")
-
-        # update cumulative estimated reward
-        self._cumulative_estimated_reward[dataset_name] += reward/self._probabilities[dataset_name]
-
-        # print(f"Rank: {torch.distributed.get_rank()} -- cumulative_estimated_reward {self._cumulative_estimated_reward}")
-
-        # calculate epsilons
-        self.prev_eps = self.eps
-        self.eps = min(1/self.num_datasets, math.sqrt(math.log(self.num_datasets)/(self.num_datasets*iteration)))
 
 class NaiveValidationWeightUpdater:
     def __init__(

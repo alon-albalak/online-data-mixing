@@ -299,6 +299,12 @@ class DynamicDataSamplingWeight(BaseDataSamplingWeight):
         elif self.internal_updates:
             self.weight_updater.internal_update(iteration=iteration, **kwargs)
 
+    def group_update(self, iteration: int, **kwargs):
+        if self.update_scheduler.requires_update(iteration):
+            self.weights = self.weight_updater.group_update(iteration=iteration, **kwargs)
+        elif self.internal_updates:
+            self.weight_updater.internal_update(iteration=iteration, **kwargs)
+
     def log(self):
         logging_dict = {}
         for var in self.weight_updater.vars_to_log:
@@ -372,22 +378,115 @@ class Exp3WeightUpdater:
         #       )
 
         return list(self._probabilities.values())
-    
-    def internal_update(self, dataset_name: str, reward: float, iteration: int) -> None:
 
-        reward = reward/10
-
-        # print(f"Rank: {torch.distributed.get_rank()} -- dataset_name: {dataset_name} -- reward: {reward}"
-        #       f" -- eps {self.eps} -- prev_eps {self.prev_eps}")
+    def group_update(self, dataset_names: List[str], rewards: List, iteration: int):
+        # calculate epsilons
+        self.prev_eps = self.eps
+        self.eps = min(1/self.num_datasets, math.sqrt(math.log(self.num_datasets)/(self.num_datasets*iteration)))
 
         # update cumulative estimated reward
-        self._cumulative_estimated_reward[dataset_name] += reward/self._probabilities[dataset_name]
-
+        for name, reward in zip(dataset_names, rewards):
+            self._cumulative_estimated_reward[name] += reward/self._probabilities[name]
         # print(f"Rank: {torch.distributed.get_rank()} -- cumulative_estimated_reward {self._cumulative_estimated_reward}")
+
+        # calculate scaling factor
+        total_estimated_rewards = sum([math.exp(r*self.prev_eps) for r in self._cumulative_estimated_reward.values()])
+        scaling_factor = (1-self.num_datasets*self.eps)/total_estimated_rewards
+        # print(f"Rank: {torch.distributed.get_rank()} -- total_estimated_rewards {total_estimated_rewards} -- scaling_factor {scaling_factor}")
+
+        # update weights
+        for name in self.dataset_names:
+            self.weights[self.dataset_map[name]] = math.exp(self._cumulative_estimated_reward[name]*self.prev_eps)*scaling_factor + self.eps
+        # print(f"Rank: {torch.distributed.get_rank()} -- cumulative_estimated_reward {self._cumulative_estimated_reward}")
+
+        # update probabilities
+        total_weights = sum(self.weights)
+        for name in self.dataset_names:
+            self._probabilities[name] = self.weights[self.dataset_map[name]]/total_weights
+
+        # print(f"Rank: {torch.distributed.get_rank()} -- reward: {reward} -- eps {self.eps} -- scaling_factor {scaling_factor}"
+        #       f" -- cumulative_estimated_reward {self._cumulative_estimated_reward} -- weights {self.weights} -- probabilities {self._probabilities}"
+        #       f" -- total_weights {total_weights}"
+        #       )
+
+        return list(self._probabilities.values())
+    
+class SmoothedMeanWeightUpdater:
+    def __init__(
+            self,
+            dataset_names: List[str],
+            weights: List[float],
+            ):
+        self.dataset_names = dataset_names
+        self.dataset_map = {name: i for i, name in enumerate(dataset_names)}
+        self.num_datasets = len(dataset_names)
+        self.weights = weights
+        self._estimated_reward = {name: 0.0 for name in dataset_names}
+        total_weights = np.sum(weights)
+        self._probabilities = {name: weight/total_weights for name, weight in zip(dataset_names, weights)}
+        self.eps = 1/self.num_datasets
+        self.prev_eps = None
+        self.smoothing_factor = 0.9
+        self.vars_to_log = ["_probabilities", "_estimated_reward"]
+
+    def update(self, dataset_name: str, reward: float, iteration: int) -> List[float]:
+        """
+        Updates the weights based on the provided reward.
+        """
+
+        # update cumulative estimated reward
+        self._estimated_reward[dataset_name] = self.smoothing_factor*self._estimated_reward[dataset_name] + (1-self.smoothing_factor)*reward
 
         # calculate epsilons
         self.prev_eps = self.eps
         self.eps = min(1/self.num_datasets, math.sqrt(math.log(self.num_datasets)/(self.num_datasets*iteration)))
+
+        # calculate scaling factor
+        total_estimated_rewards = sum([math.exp(r*self.prev_eps) for r in self._estimated_reward.values()])
+        scaling_factor = (1-self.num_datasets*self.eps)/total_estimated_rewards
+
+        # update weights
+        for name in self.dataset_names:
+            self.weights[self.dataset_map[name]] = math.exp(self._estimated_reward[name]*self.prev_eps)*scaling_factor + self.eps
+
+        # update probabilities
+        total_weights = sum(self.weights)
+        for name in self.dataset_names:
+            self._probabilities[name] = self.weights[self.dataset_map[name]]/total_weights
+
+        return list(self._probabilities.values())
+    
+    def group_update(self, dataset_names: List[str], rewards: List, iteration: int):
+        # calculate epsilons
+        self.prev_eps = self.eps
+        self.eps = min(1/self.num_datasets, math.sqrt(math.log(self.num_datasets)/(self.num_datasets*iteration)))
+
+        # update cumulative estimated reward
+        for name, reward in zip(dataset_names, rewards):
+            # smoothed mean
+            # self._estimated_reward[name] = self.smoothing_factor*self._estimated_reward[name] + (1-self.smoothing_factor)*reward
+            # smoothed exponentiated mean
+            self._estimated_reward[name] = self.smoothing_factor*self._estimated_reward[name] + (1-self.smoothing_factor)*math.exp(reward)
+        # print(f"Rank: {torch.distributed.get_rank()} -- estimated_reward {self._estimated_reward}")
+
+        # calculate scaling factor
+        # total_estimated_rewards = sum([math.exp(r*self.prev_eps) for r in self._estimated_reward.values()])
+        # scaling_factor = (1-self.num_datasets*self.eps)/total_estimated_rewards
+        # calculate normalized scaling factor
+        total_estimated_rewards = sum((r*self.prev_eps) for r in self._estimated_reward.values())
+        scaling_factor = (1-self.num_datasets*self.eps)/total_estimated_rewards
+
+        # update weights
+        for name in self.dataset_names:
+            # self.weights[self.dataset_map[name]] = math.exp(self._estimated_reward[name]*self.prev_eps)*scaling_factor + self.eps
+            self.weights[self.dataset_map[name]] = self._estimated_reward[name]*self.prev_eps*scaling_factor + self.eps
+
+        # update probabilities
+        total_weights = sum(self.weights)
+        for name in self.dataset_names:
+            self._probabilities[name] = self.weights[self.dataset_map[name]]/total_weights
+
+        return list(self._probabilities.values())
 
 class NaiveValidationWeightUpdater:
     def __init__(
@@ -485,6 +584,8 @@ class NaiveValidationWeightUpdater:
 def get_weight_updater(update_method: str, dataset_names, weights, **kwargs):
     if update_method == "exp3":
         return Exp3WeightUpdater(dataset_names=dataset_names, weights=weights)
+    elif update_method == "smoothed_mean":
+        return SmoothedMeanWeightUpdater(dataset_names=dataset_names, weights=weights)
     elif update_method == "naive_validation":
         return NaiveValidationWeightUpdater(dataset_names=dataset_names, weights=weights,
                                             reward_dataloaders=kwargs["reward_dataloaders"],

@@ -1031,6 +1031,10 @@ class NeoXArgsDataSampling(NeoXArgsTemplate):
     """
     Whether to use normalized reward for data sampling.
     """
+    scale_by_reward_loss_diff: bool = False
+    """
+    Whether to scale by reward loss difference for data sampling.
+    """
     validation_based_reward: bool = False
     """
     Whether to use validation based reward for data sampling.

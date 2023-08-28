@@ -98,7 +98,7 @@ class GPT2Dataset(torch.utils.data.Dataset):
                     f"WARNING: shuffle index length ({self.shuffle_idx_len}) is not equal to sample index length ({self.sample_idx_len})"
                 )
 
-    def _reinitialize(self):
+    def _reinitialize(self, override_process_dataset=False):
         assert self._repeatable, "Cannot reinitialize a non-repeatable dataset"
         self._completed_epochs += 1
 
@@ -115,7 +115,7 @@ class GPT2Dataset(torch.utils.data.Dataset):
             should_process_dataset = torch.distributed.get_rank() == 0
 
 
-        if should_process_dataset:
+        if should_process_dataset or override_process_dataset:
             np_rng = np.random.RandomState(seed=self.seed)
             shuffle_dtype = self.shuffle_idx.dtype
             shuffle_idx_array = self.shuffle_idx.tolist()
@@ -129,11 +129,15 @@ class GPT2Dataset(torch.utils.data.Dataset):
                 " (seconds): {:4f}".format(time.time() - start_time)
             )
 
-        counts = torch.cuda.LongTensor([1])
-        torch.distributed.all_reduce(counts, group=mpu.get_io_parallel_group())
-        assert counts[0].item() == torch.distributed.get_world_size(
-            group=mpu.get_io_parallel_group()
-        )
+        # This should be a barrier but nccl barrier assumes
+        # device_index=rank which is not the case for model
+        # parallel case
+        if not override_process_dataset:
+            counts = torch.cuda.LongTensor([1])
+            torch.distributed.all_reduce(counts, group=mpu.get_io_parallel_group())
+            assert counts[0].item() == torch.distributed.get_world_size(
+                group=mpu.get_io_parallel_group()
+            )
 
         # Load mappings.
         start_time = time.time()

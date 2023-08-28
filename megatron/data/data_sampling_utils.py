@@ -319,7 +319,42 @@ class UpdateScheduler:
     def requires_update(self, iteration: int) -> bool:
         return iteration > self.warmup_steps and iteration % self.update_frequency == 0
 
+class EMAWeightUpdater:
+    """
+    Implementation of the weight updater, using Exponential Moving Average (EMA).
+    """
+    def __init__(
+        self,
+        dataset_names: List[str],
+        weights: List[float],
+    ):
+        self.dataset_names = dataset_names
+        self.dataset_map = {name: i for i, name in enumerate(dataset_names)}
+        self.num_datasets = len(dataset_names)
+        self.weights = {name: weight for name, weight in zip(dataset_names, weights)}
+        total_weights = np.sum(weights)
+        self._probabilities = {name: weight/total_weights for name, weight in zip(dataset_names, weights)}
+        self.smoothing_factor = 2
+        self.distribution_function = None # can be None or "softmax"
+        self.vars_to_log = ["_probabilities", "weights"]
+
+    def update(self, dataset_name: str, reward: float, iteration: int) -> List[float]:
+        self.weights[dataset_name] = (self.smoothing_factor / (1 + iteration)) * reward + (1 - self.smoothing_factor / (1 + iteration)) * self.weights[dataset_name]
+
+        if self.distribution_function == "softmax":
+            total_weights = np.sum([np.exp(weight) for weight in self.weights.values()])
+            self._probabilities = {name: np.exp(weight)/total_weights for name, weight in self.weights.items()}
+
+        else:
+            total_weights = np.sum([weight for weight in self.weights.values()])
+            self._probabilities = {name: weight/total_weights for name, weight in self.weights.items()}
+
+        return list(self._probabilities.values())
+
 class Exp3WeightUpdater:
+    """
+    Implementation of the weight updater, using Exponential-weight algorithm for Exploration and Exploitation (Exp3).
+    """
     def __init__(
             self,
             dataset_names: List[str],
@@ -378,6 +413,7 @@ class Exp3WeightUpdater:
         #       )
 
         return list(self._probabilities.values())
+
 
     def group_update(self, dataset_names: List[str], rewards: List, iteration: int):
         # calculate epsilons
@@ -584,6 +620,8 @@ class NaiveValidationWeightUpdater:
 def get_weight_updater(update_method: str, dataset_names, weights, **kwargs):
     if update_method == "exp3":
         return Exp3WeightUpdater(dataset_names=dataset_names, weights=weights)
+    elif update_method == "ema":
+        return EMAWeightUpdater(dataset_names=dataset_names, weights=weights)
     elif update_method == "smoothed_mean":
         return SmoothedMeanWeightUpdater(dataset_names=dataset_names, weights=weights)
     elif update_method == "naive_validation":

@@ -8,7 +8,11 @@ DATA_SAMPLING_WARMUP_STEPS="2000"
 DATA_SAMPLING_UPDATE_FREQUENCY="1"
 
 # SEEDS=(1234 42 100 222)
+<<<<<<< HEAD
 SEEDS=( 1234 )
+=======
+SEEDS=(42)
+>>>>>>> a11caa7c381254a50932a4d22c8f35f7f81e0d9b
 
 # RUN SPECIFIC CONFIGS
 for SEED in ${SEEDS[@]}; do
@@ -18,7 +22,10 @@ for SEED in ${SEEDS[@]}; do
     RUN_SPECIFIC_CONFIG="alon_configs/run_specific/${RUN_NAME}.yml"
     echo "Running with configs: ${CONFIGS} ${RUN_SPECIFIC_CONFIG}"
     python3 deepy.py train.py ${CONFIGS} ${RUN_SPECIFIC_CONFIG} 2>&1 | tee outputs/${RUN_NAME}.log
+<<<<<<< HEAD
 
     # evaluate
     bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_1B_1gpu.yml 2>&1 | tee outputs/${RUN_NAME}_eval.log
+=======
+>>>>>>> a11caa7c381254a50932a4d22c8f35f7f81e0d9b
 done

@@ -4,7 +4,7 @@ CONFIGS="alon_configs/data/pile.yml alon_configs/init.yml alon_configs/models/1B
 
 WANDB_GROUP="1B_ods_smoothed_mean"
 DATA_SAMPLING_METHOD="smoothed_mean"
-DATA_SAMPLING_WARMUP_STEPS="0"
+DATA_SAMPLING_WARMUP_STEPS="2000"
 DATA_SAMPLING_UPDATE_FREQUENCY="1"
 MIXED_MINIBATCHES=true
 

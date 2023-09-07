@@ -1,7 +1,7 @@
 MODEL_CONFIG=$1
 EVAL_CONFIG=$2
 
-EVAL_TASKS="lambada_openai piqa winogrande wsc arc_easy sciq logiqa wikitext openbookqa"
+EVAL_TASKS="lambada_openai piqa winogrande wsc arc_easy sciq logiqa wikitext openbookqa hendrycksTest-*"
 # Temporarily not using triviaqa because it can't download?
 # Not using:
 #   webqs (web questions) because our models have very poor performance (0.005 accuracy)

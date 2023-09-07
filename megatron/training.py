@@ -1010,8 +1010,6 @@ def train_mixed_minibatch(
             losses.append(loss)
             batch_losses[batch_name] += loss.item()
 
-            neox_args.dataset_iterations[batch_name] += 1/len(local_batch_names)
-
         loss_dict, skipped_iter = backward_step_only(
             neox_args=neox_args,
             timers=timers,
@@ -1019,6 +1017,11 @@ def train_mixed_minibatch(
             model=model,
             optimizer=optimizer,
         )
+
+        total_batches = sum(batch_name_counts.values())
+        for batch_name, count in batch_name_counts.items():
+            neox_args.dataset_iterations[batch_name] += count/total_batches
+
         iteration += 1
 
         overflow_monitor.check(skipped_iter)  # check for repeated overflow

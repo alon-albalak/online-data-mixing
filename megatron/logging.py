@@ -286,8 +286,6 @@ def training_log(
                 )
                 if neox_args.mixed_batches:
                     percent = iterations / ( iteration * neox_args.train_batch_size )
-                elif neox_args.mixed_minibatches:
-                    percent = iterations / ( iteration * (neox_args.train_batch_size / neox_args.train_micro_batch_size_per_gpu) )
                 else:
                     percent = iterations / iteration
                 tb_wandb_log(

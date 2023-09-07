@@ -1,8 +1,8 @@
 # GENERAL CONFIGS THAT WILL BE USED FOR ALL RUNS
-CONFIGS="alon_configs/data/pile.yml alon_configs/init.yml alon_configs/models/1B.yml alon_configs/eval_tasks.yml"
+CONFIGS="alon_configs/data/pile.yml alon_configs/init.yml alon_configs/models/1B.yml alon_configs/eval_tasks.yml alon_configs/train_data_weights/original_pile.yml"
 # Doesn't include alon_configs/parallelism.yml
 
-WANDB_GROUP="1B_ods_smoothed_mean"
+WANDB_GROUP="1B_ods_smoothed_mean_mixed_minibatches_original_weights_init"
 DATA_SAMPLING_METHOD="smoothed_mean"
 DATA_SAMPLING_WARMUP_STEPS="2000"
 DATA_SAMPLING_UPDATE_FREQUENCY="1"

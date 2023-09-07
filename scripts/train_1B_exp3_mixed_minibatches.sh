@@ -2,8 +2,8 @@
 CONFIGS="alon_configs/data/pile.yml alon_configs/init.yml alon_configs/models/1B.yml alon_configs/eval_tasks.yml alon_configs/train_data_weights/original_pile.yml"
 # Doesn't include alon_configs/parallelism.yml
 
-WANDB_GROUP="1B_ods_smoothed_mean_mixed_minibatches_original_weights_init"
-DATA_SAMPLING_METHOD="smoothed_mean"
+WANDB_GROUP="1B_ods_mixed_minibatches_original_weights_init"
+DATA_SAMPLING_METHOD="exp3"
 DATA_SAMPLING_WARMUP_STEPS="2000"
 DATA_SAMPLING_UPDATE_FREQUENCY="1"
 MIXED_MINIBATCHES=true
@@ -19,7 +19,7 @@ for SEED in ${SEEDS[@]}; do
     RUN_SPECIFIC_CONFIG="alon_configs/run_specific/${RUN_NAME}.yml"
     echo "Running with configs: ${CONFIGS} ${RUN_SPECIFIC_CONFIG}"
     python3 deepy.py train.py ${CONFIGS} ${RUN_SPECIFIC_CONFIG} 2>&1 | tee outputs/${RUN_NAME}.log
-    
+
     # evaluate
     bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_1B_1gpu.yml 2>&1 | tee outputs/${RUN_NAME}_eval.log
 done

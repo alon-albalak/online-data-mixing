@@ -379,6 +379,9 @@ class Exp3WeightUpdater:
         # print(f"Rank: {torch.distributed.get_rank()} -- dataset_name: {dataset_name} -- reward: {reward}"
         #       f" -- eps {self.eps} -- prev_eps {self.prev_eps}")
 
+        # scale down reward so that cumulative reward doesn't explode
+        reward = reward/10
+
         # update cumulative estimated reward
         self._cumulative_estimated_reward[dataset_name] += reward/self._probabilities[dataset_name]
 
@@ -422,6 +425,8 @@ class Exp3WeightUpdater:
 
         # update cumulative estimated reward
         for name, reward in zip(dataset_names, rewards):
+            # scale down reward so that cumulative reward doesn't explode
+            reward = reward/10
             self._cumulative_estimated_reward[name] += reward/self._probabilities[name]
         # print(f"Rank: {torch.distributed.get_rank()} -- cumulative_estimated_reward {self._cumulative_estimated_reward}")
 

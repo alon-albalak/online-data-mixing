@@ -983,12 +983,10 @@ def train_mixed_minibatch(
                 timers("batch generator").stop()
                 # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} RESTARTING DATASET {batch_name}")
                 # reinitialize dataset
-                train_dataloaders[batch_name].dataset._reinitialize()
+                train_dataloaders[batch_name].dataset.seed += 1
+                train_dataloaders[batch_name].dataset._reinitialize(override_process_dataset=True)
                 # update completed epochs
                 neox_args.dataset_epochs[batch_name] = train_dataloaders[batch_name].dataset._completed_epochs
-                # wait for all processes
-                if torch.distributed.is_initialized():
-                    torch.distributed.barrier()
                 # create iterator from dataloader
                 train_data_iterator[batch_name] = iter(train_dataloaders[batch_name])
                 # continue with new batch
@@ -1380,7 +1378,6 @@ def train_named_datasets_mixed_minibatch_validation_reward(
     data_sampler_kwargs = {}
     # initialize validation data iterators with slightly different seed, and only allow initialization on main process
     neox_args.seed += 1
-    tmp = neox_args.num_workers
     neox_args.num_workers = 0
     (_, reward_dataloaders, _, _) = build_train_valid_test_data_iterators(neox_args=neox_args)
     neox_args.seed -= 1

@@ -1008,10 +1008,6 @@ def train_mixed_minibatch(
             losses.append(loss)
             batch_losses[batch_name] += loss.item()
 
-        # sync processes
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
-
         loss_dict, skipped_iter = backward_step_only(
             neox_args=neox_args,
             timers=timers,
@@ -1019,10 +1015,6 @@ def train_mixed_minibatch(
             model=model,
             optimizer=optimizer,
         )
-
-        # sync processes
-        if torch.distributed.is_initialized():
-            torch.distributed.barrier()
 
         total_batches = sum(batch_name_counts.values())
         for batch_name, count in batch_name_counts.items():
@@ -1044,8 +1036,6 @@ def train_mixed_minibatch(
         # gather batch losses
         # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} -- PRE BATCH LOSSES {batch_losses}")
         if torch.distributed.is_initialized():
-            # sync processes
-            torch.distributed.barrier()
             for b in batch_losses.keys():
                 torch.distributed.all_reduce(batch_losses[b])
         # scale batch losses

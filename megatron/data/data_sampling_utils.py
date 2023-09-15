@@ -457,6 +457,7 @@ class SmoothedMeanWeightUpdater:
             self,
             dataset_names: List[str],
             weights: List[float],
+            smoothing_factor: float = 0.9,
             ):
         self.dataset_names = dataset_names
         self.dataset_map = {name: i for i, name in enumerate(dataset_names)}
@@ -467,7 +468,7 @@ class SmoothedMeanWeightUpdater:
         self._probabilities = {name: weight/total_weights for name, weight in zip(dataset_names, weights)}
         self.eps = 1/self.num_datasets
         self.prev_eps = None
-        self.smoothing_factor = 0.9
+        self.smoothing_factor = smoothing_factor
         self.vars_to_log = ["_probabilities", "_estimated_reward"]
 
     def update(self, dataset_name: str, reward: float, iteration: int) -> List[float]:
@@ -628,7 +629,8 @@ def get_weight_updater(update_method: str, dataset_names, weights, **kwargs):
     elif update_method == "ema":
         return EMAWeightUpdater(dataset_names=dataset_names, weights=weights)
     elif update_method == "smoothed_mean":
-        return SmoothedMeanWeightUpdater(dataset_names=dataset_names, weights=weights)
+        return SmoothedMeanWeightUpdater(dataset_names=dataset_names, weights=weights,
+                                         smoothing_factor=kwargs["smoothing_factor"])
     elif update_method == "naive_validation":
         return NaiveValidationWeightUpdater(dataset_names=dataset_names, weights=weights,
                                             reward_dataloaders=kwargs["reward_dataloaders"],

@@ -1017,7 +1017,7 @@ class NeoXArgsDataSampling(NeoXArgsTemplate):
     data_sampling_method: str = None
     """
     Method for sampling data.
-    Options: `exp3`
+    Options: `exp3`, `smoothed_mean`
     """
     mixed_batches: bool = False
     """
@@ -1038,6 +1038,10 @@ class NeoXArgsDataSampling(NeoXArgsTemplate):
     validation_based_reward: bool = False
     """
     Whether to use validation based reward for data sampling.
+    """
+    data_sampling_smoothing_factor: float = 0.9
+    """
+    Smoothing factor for smoothed_mean data sampling method.
     """
     
 

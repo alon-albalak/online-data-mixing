@@ -931,12 +931,16 @@ def train_mixed_minibatch(
         train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
         neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
         dataset_names = list(train_data_iterator.keys())
+        data_sampler_kwargs = {}
+        if neox_args.data_sampling_method == "smoothed_mean":
+            data_sampler_kwargs['smoothing_factor'] = neox_args.data_sampling_smoothing_factor
         data_sampling_weights = get_data_sampling_weighter(
             dataset_names=list(train_dataloaders.keys()),
             weights=neox_args.train_data_weights,
             warmup_steps=neox_args.data_sampling_warmup_steps,
             update_frequency=neox_args.data_sampling_update_frequency,
-            update_method=neox_args.data_sampling_method
+            update_method=neox_args.data_sampling_method,
+            **data_sampler_kwargs
             )
     else:
         data_sampling_weights = None

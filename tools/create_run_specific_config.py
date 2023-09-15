@@ -1,4 +1,5 @@
 # Simple utility to create a yml config file from command line arguments.
+# Handles int, float, bool, and string arguments.
 
 import sys
 import os
@@ -10,15 +11,20 @@ print(sys.argv[1:])
 config = {}
 for k, v in zip(sys.argv[1::2], sys.argv[2::2]):
     k = k.replace("--", "")
-    if v.isnumeric():
-        if float(v).is_integer():
+    # first, handle numeric inputs
+    try:
+        f_v = float(v)
+        if f_v.is_integer():
             v = int(v)
         else:
             v = float(v)
-    elif v.lower() == "true":
-        v = True
-    elif v.lower() == "false":
-        v = False
+    # if not numeric, then convert bools
+    except:
+        if v.lower() == "true":
+            v = True
+        elif v.lower() == "false":
+            v = False
+    # otherwise, it's a string and we do nothing
     config[k] = v
 
 print(config)

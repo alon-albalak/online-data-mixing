@@ -477,7 +477,7 @@ class SmoothedMeanWeightUpdater:
         """
 
         # update cumulative estimated reward
-        self._estimated_reward[dataset_name] = self.smoothing_factor*self._estimated_reward[dataset_name] + (1-self.smoothing_factor)*reward
+        self._estimated_reward[dataset_name] = self.smoothing_factor*self._estimated_reward[dataset_name] + (1-self.smoothing_factor)*math.exp(reward)
 
         # calculate epsilons
         self.prev_eps = self.eps
@@ -511,9 +511,6 @@ class SmoothedMeanWeightUpdater:
             self._estimated_reward[name] = self.smoothing_factor*self._estimated_reward[name] + (1-self.smoothing_factor)*math.exp(reward)
         # print(f"Rank: {torch.distributed.get_rank()} -- estimated_reward {self._estimated_reward}")
 
-        # calculate scaling factor
-        # total_estimated_rewards = sum([math.exp(r*self.prev_eps) for r in self._estimated_reward.values()])
-        # scaling_factor = (1-self.num_datasets*self.eps)/total_estimated_rewards
         # calculate normalized scaling factor
         total_estimated_rewards = sum((r*self.prev_eps) for r in self._estimated_reward.values())
         scaling_factor = (1-self.num_datasets*self.eps)/total_estimated_rewards

@@ -38,6 +38,7 @@ def main():
         forward_step,
         neox_args,
         eval_tasks=neox_args.eval_tasks,
+        num_fewshot=neox_args.eval_num_fewshot,
         bootstrap_iters=10000,
     )
     if neox_args.rank == 0:
@@ -69,9 +70,14 @@ def main():
                 )
 
         pprint(results)
-        results_path = (
-            f'eval_results_{datetime.now().strftime("%m-%d-%Y-%H-%M-%S")}.json'
-        )
+        if neox_args.eval_num_fewshot > 0:
+            results_path = (
+                f'eval_results_{neox_args.eval_num_fewshot}shot_{datetime.now().strftime("%m-%d-%Y-%H-%M-%S")}.json'
+            )
+        else:
+            results_path = (
+                f'eval_results_{datetime.now().strftime("%m-%d-%Y-%H-%M-%S")}.json'
+            )
         if neox_args.eval_results_prefix:
             results_path = f"{neox_args.eval_results_prefix}_{results_path}"
         with open(results_path, "w") as f:

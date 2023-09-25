@@ -5,7 +5,6 @@ CONFIGS="alon_configs/data/pile.yml alon_configs/init.yml alon_configs/models/1B
 WANDB_GROUP="1B_original_unnamed_train_datasets"
 
 # SEEDS=(1234 42 100 222)
-SEEDS=(42 100 222)
 
 # RUN SPECIFIC CONFIGS
 for SEED in ${SEEDS[@]}; do
@@ -16,6 +15,8 @@ for SEED in ${SEEDS[@]}; do
     echo "Running with configs: ${CONFIGS} ${RUN_SPECIFIC_CONFIG}"
     python3 deepy.py train.py ${CONFIGS} ${RUN_SPECIFIC_CONFIG} 2>&1 | tee outputs/${RUN_NAME}.log
 
-    # evaluate
+    # evaluate 0-shot
     bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_1B_1gpu.yml
+    # evaluate 5-shot
+    bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_1B_1gpu.yml 5
 done

@@ -16,6 +16,8 @@ for SEED in ${SEEDS[@]}; do
     echo "Running with configs: ${CONFIGS} ${RUN_SPECIFIC_CONFIG}"
     python3 deepy.py train.py ${CONFIGS} ${RUN_SPECIFIC_CONFIG} 2>&1 | tee outputs/${RUN_NAME}.log
 
-    # evaluate
+    # evaluate 0-shot
     bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_1B_1gpu.yml
+    # evaluate 5-shot
+    bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_1B_1gpu.yml 5
 done

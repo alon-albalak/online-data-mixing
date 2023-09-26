@@ -4,7 +4,7 @@ CONFIGS="alon_configs/data/pile.yml alon_configs/init.yml alon_configs/models/1B
 
 WANDB_GROUP="1B_original_unnamed_train_datasets"
 
-# SEEDS=(1234 42 100 222)
+SEEDS=(1234 42 100 222)
 
 # RUN SPECIFIC CONFIGS
 for SEED in ${SEEDS[@]}; do

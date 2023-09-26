@@ -35,6 +35,7 @@ save_path = args.config_path.replace(".yml", "_eval.yml")
 # if using num_fewshot
 if args.num_fewshot > 0:
     config["eval_num_fewshot"] = args.num_fewshot
+    config["wandb_run_name"] += f"_{args.num_fewshot}shot"
     save_path = save_path.replace(".yml", f"_{args.num_fewshot}shot.yml")
 
 with open(save_path, "w") as f:

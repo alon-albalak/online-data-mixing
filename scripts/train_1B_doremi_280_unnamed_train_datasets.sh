@@ -4,8 +4,8 @@ CONFIGS="alon_configs/data/pile.yml alon_configs/init.yml alon_configs/models/1B
 
 WANDB_GROUP="1B_doremi_280_unnamed_train_datasets"
 
-# SEEDS=(1234 42 100 222)
-SEEDS=( 1234 222 )
+SEEDS=(1234 42 100 222)
+# SEEDS=( 1234 222 )
 
 # RUN SPECIFIC CONFIGS
 for SEED in ${SEEDS[@]}; do
@@ -17,8 +17,10 @@ for SEED in ${SEEDS[@]}; do
     python3 deepy.py train.py ${CONFIGS} ${RUN_SPECIFIC_CONFIG} 2>&1 | tee outputs/${RUN_NAME}.log
 
     # evaluate 0-shot
-    bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_1B_1gpu.yml 2>&1 | tee outputs/${RUN_NAME}_eval.log
-    # evaluate 5-shot
-    NUM_SHOTS=5
-    bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_1B_1gpu.yml ${NUM_SHOTS} 2>&1 | tee outputs/${RUN_NAME}_${NUM_SHOTS}shot_eval.log
+    bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_1B_1gpu.yml 2>&1 | tee outputs/${RUN_NAME}_eval.log &
+    # evaluate 1-shot through 5-shot
+    for i in {1..5}; do
+        bash scripts/evaluate.sh outputs/${RUN_NAME}/global_step100000/configs/${RUN_NAME}.yml alon_configs/models/eval_1B_1gpu_local${i}.yml ${i} 2>&1 | tee outputs/${RUN_NAME}_${i}shot_eval.log &
+    done
+    wait < <(jobs -p)
 done

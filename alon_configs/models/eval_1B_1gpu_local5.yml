@@ -96,8 +96,8 @@
 
   "keep_last_n_checkpoints": 1,
 
-  "include": "localhost:0",
+  "include": "localhost:5",
   "world_size": 1,
-  "master_port": 12340,
+  "master_port": 12345,
 
 }

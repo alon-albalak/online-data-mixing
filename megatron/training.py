@@ -1038,6 +1038,7 @@ def train_mixed_minibatch(
             lr = 0
 
         # gather batch losses
+        timers("data sampling update").start()
         # print(f"ITERATION: {iteration} -- RANK {torch.distributed.get_rank()} -- PRE BATCH LOSSES {batch_losses}")
         if torch.distributed.is_initialized():
             for b in batch_losses.keys():
@@ -1048,7 +1049,6 @@ def train_mixed_minibatch(
 
         # update data sampling weights
         # reward = loss_dict["lm_loss"].item()
-        timers("data sampling update").start()
         data_sampling_weights.group_update(iteration, **{"dataset_names": batch_losses.keys(), "rewards": batch_losses.values()})
         # for batch_name in batch_losses.keys():
         #     data_sampling_weights.update(iteration, **{"dataset_name":batch_name, "reward":batch_losses[batch_name]})

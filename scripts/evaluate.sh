@@ -1,6 +1,7 @@
 MODEL_CONFIG=$1
 EVAL_CONFIG=$2
 NUM_FEWSHOT=${3:-0}
+GPU=${4:-0}
 
 # Can't use perplexity-based evaluation tasks with in-context examples
 if [ ${NUM_FEWSHOT} -eq 0 ]; then
@@ -30,6 +31,9 @@ else
     EVAL_MODEL_CONFIG=${MODEL_CONFIG%.yml}_eval_${NUM_FEWSHOT}shot.yml
 fi
 
+# Get GPU Config
+GPU_CONFIG=alon_configs/gpu/gpu${GPU}.yml
+
 
 # EVAL_CONFIG should be in the configs folder. See alon_configs/models/eval_160m_1gpu.yml for an example
-python ./deepy.py evaluate.py ${EVAL_MODEL_CONFIG} ${EVAL_CONFIG} --eval_tasks ${EVAL_TASKS}
+python ./deepy.py evaluate.py ${EVAL_MODEL_CONFIG} ${EVAL_CONFIG} ${GPU_CONFIG} --eval_tasks ${EVAL_TASKS}

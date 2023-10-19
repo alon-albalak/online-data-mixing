@@ -641,7 +641,7 @@ def build_train_valid_test_data_iterators(neox_args):
                     // neox_args.eval_interval
                 ) * neox_args.eval_iters
                 if start_iter_val > 0:
-                    print_rank_0(f"WARNING: tried setting start_iter_val to {start_iter_val} but this is not enforced for named datasets. Named datasets always start from 0.")
+                    print_rank_0(f"WARNING: tried setting start_iter_val to {start_iter_val} but this is not enforced for named datasets. Named datasets always start from 0. This is not a bug, and is expected behavior if loading a model checkpoint.")
                 dataloader.batch_sampler.start_iter = 0
                 print_rank_0(
                     "setting validation data start iteration for {} to {}/{} samples".format(

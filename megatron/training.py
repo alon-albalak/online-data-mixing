@@ -43,7 +43,13 @@ from megatron.model import (
     SoftEmbedding,
     get_params_for_weight_decay_optimization,
 )
-from megatron.checkpointing import load_checkpoint, save_checkpoint
+from megatron.checkpointing import (
+    load_checkpoint,
+    save_checkpoint,
+    load_data_sampling_weights,
+    load_local_samples_seen_per_dataset,
+    load_global_samples_seen_per_dataset
+)
 from megatron.data.data_utils import build_train_valid_test_data_iterators
 from megatron.initialize import initialize_megatron
 from megatron.learning_rates import AnnealingLR
@@ -927,6 +933,9 @@ def train_mixed_minibatch(
     # if using named train datasets, prepare dataloaders, dataiterators and dicts to track iterations and epochs
     if neox_args.use_named_train_datasets:
         neox_args.dataset_iterations = {name: 0 for name in train_data_iterator.keys()}
+        # if saving, need to specify number of iterations per device
+        if neox_args.save:
+            neox_args.local_samples_seen_per_dataset = {name: 0 for name in train_data_iterator.keys()}
         train_dataloaders = {name: dataloader for name, dataloader in train_data_iterator.items()}
         train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
         neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
@@ -942,6 +951,42 @@ def train_mixed_minibatch(
             update_method=neox_args.data_sampling_method,
             **data_sampler_kwargs
             )
+        
+        # if loading from checkpoint
+        if neox_args.load:
+            # get data sampling weights
+            data_sampling_weights = load_data_sampling_weights(neox_args)
+
+            # load local samples seen per dataset
+            neox_args.local_samples_seen_per_dataset = load_local_samples_seen_per_dataset(neox_args)
+            # iterate through datasets to correctly initialize the dataloaders
+            for dataset_name, samples_seen in neox_args.local_samples_seen_per_dataset.items():
+                local_batches = samples_seen / neox_args.train_micro_batch_size_per_gpu
+                assert(local_batches.is_integer()), f"Loaded samples seen per dataset is not a multiple of micro batch size: {samples_seen} / {neox_args.train_micro_batch_size_per_gpu} = {local_batches}"
+
+                batch_iterator = train_data_iterator[dataset_name]
+                for _ in range(int(local_batches)):
+                    try:
+                        data = next(batch_iterator)
+                    except:
+                        # reinitialize dataset
+                        train_dataloaders[batch_name].dataset.seed += 1
+                        train_dataloaders[batch_name].dataset._reinitialize(override_process_dataset=True)
+                        # update completed epochs
+                        neox_args.dataset_epochs[batch_name] = train_dataloaders[batch_name].dataset._completed_epochs
+                        # create iterator from dataloader
+                        train_data_iterator[batch_name] = iter(train_dataloaders[batch_name])
+                        # continue with new batch
+                        batch_iterator = train_data_iterator[batch_name]
+                        data = next(batch_iterator)
+
+            # update global iteration count
+            global_samples_seen_per_dataset = load_global_samples_seen_per_dataset(neox_args)
+            for dataset_name, samples_seen in global_samples_seen_per_dataset.items():
+                global_batches = samples_seen / neox_args.world_size / neox_args.train_micro_batch_size_per_gpu
+                neox_args.dataset_iterations[dataset_name] = global_batches
+
+
     else:
         data_sampling_weights = None
 
@@ -1011,6 +1056,7 @@ def train_mixed_minibatch(
                 # )
             losses.append(loss)
             batch_losses[batch_name] += loss.item()
+            neox_args.local_samples_seen_per_dataset[batch_name] += neox_args.train_micro_batch_size_per_gpu
 
         loss_dict, skipped_iter = backward_step_only(
             neox_args=neox_args,
@@ -1081,6 +1127,7 @@ def train_mixed_minibatch(
                 model=model,
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
+                data_sampling_weights=data_sampling_weights
             )
 
         # Evaluation

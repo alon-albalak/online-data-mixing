@@ -160,7 +160,7 @@ def delete_old_checkpoints(save_dir, n_to_keep):
                     pass
 
 
-def save_ds_checkpoint(iteration, model, neox_args):
+def save_ds_checkpoint(iteration, model, neox_args, data_sampling_weights):
     """Save a model checkpoint."""
     sd = {
         "iteration": iteration,
@@ -203,13 +203,23 @@ def save_ds_checkpoint(iteration, model, neox_args):
                     f.write(config_data)
                 else:
                     json.dump(config_data, f)
+        if data_sampling_weights:
+            # save the entire data_sampling_weights object
+            torch.save(data_sampling_weights, os.path.join(neox_args.save, tag, "data_sampling_weights.pt"))
+    
+    # save current iterations per dataset
+    if neox_args.use_named_train_datasets:
+        # wait for all processes to make sure configs directory is created
+        torch.distributed.barrier()
+        with open(os.path.join(neox_args.save, tag, f"local_samples_seen_per_dataset_rank_{torch.distributed.get_rank()}.json"), "w") as f:
+            json.dump(neox_args.local_samples_seen_per_dataset, f)
 
 
-def save_checkpoint(neox_args, iteration, model, optimizer, lr_scheduler):
+def save_checkpoint(neox_args, iteration, model, optimizer, lr_scheduler, data_sampling_weights=None):
     """Save a model checkpoint."""
 
     if neox_args.deepspeed:
-        save_ds_checkpoint(iteration, model, neox_args)
+        save_ds_checkpoint(iteration, model, neox_args, data_sampling_weights)
     else:
         raise ValueError("Must be using deepspeed to use neox")
 
@@ -325,3 +335,45 @@ def load_checkpoint(
         print("  successfully loaded {}".format(checkpoint_name))
 
     return iteration
+
+def load_data_sampling_weights(neox_args):
+    if neox_args.load is not None and neox_args.iteration > 0:
+        # load data sampling weights from checkpoint
+        data_sampling_weights_path = os.path.join(neox_args.load, f"global_step{neox_args.iteration}", "data_sampling_weights.pt")
+        if os.path.exists(data_sampling_weights_path):
+            data_sampling_weights = torch.load(data_sampling_weights_path)
+        else:
+            data_sampling_weights = None
+    else:
+        data_sampling_weights = None
+    return data_sampling_weights
+
+def load_local_samples_seen_per_dataset(neox_args):
+    if neox_args.load is not None and neox_args.iteration > 0:
+        # load data sampling weights from checkpoint
+        local_samples_seen_per_dataset_path = os.path.join(neox_args.load, f"global_step{neox_args.iteration}", f"local_samples_seen_per_dataset_rank_{torch.distributed.get_rank()}.json")
+        if os.path.exists(local_samples_seen_per_dataset_path):
+            with open(local_samples_seen_per_dataset_path, "r") as f:
+                local_samples_seen_per_dataset = json.load(f)
+        else:
+            local_samples_seen_per_dataset = None
+    else:
+        local_samples_seen_per_dataset = None
+    return local_samples_seen_per_dataset
+
+def load_global_samples_seen_per_dataset(neox_args):
+    global_samples_seen_per_dataset = {}
+    if neox_args.load is not None and neox_args.iteration > 0:
+        # load data sampling weights from checkpoint
+        for path in Path(os.path.join(os.path.join(neox_args.load, f"global_step{neox_args.iteration}"))).glob("local_samples_seen_per_dataset_rank_*"):
+            # print(f"Loading local_samples_seen_per_dataset from {path}")
+            with path.open() as f:
+                samples_seen = json.load(f)
+            for k, v in samples_seen.items():
+                if k not in global_samples_seen_per_dataset:
+                    global_samples_seen_per_dataset[k] = 0
+                global_samples_seen_per_dataset[k] += v
+
+    # assert that numbers are correct
+    assert(sum(global_samples_seen_per_dataset.values()) == neox_args.iteration * neox_args.train_batch_size)
+    return global_samples_seen_per_dataset

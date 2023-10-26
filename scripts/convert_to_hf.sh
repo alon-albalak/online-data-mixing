@@ -1,3 +1,6 @@
+# Example usage:
+# bash scripts/convert_to_hf.sh 3B_ods_smoothed_mean_mixed_minibatches_original_weights_init_05smoothing_seed42 30000 alon_configs/models/3B.yml
+
 METHOD=$1
 STEP=$2
 MODEL_CONFIG=$3

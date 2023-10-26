@@ -95,8 +95,4 @@
   "use_named_eval_datasets": true,
   "max_validation_samples_per_dataset": 5000,
 
-  # "include": "localhost:0",
-  # "world_size": 1,
-  # "master_port": 12340,
-
 }

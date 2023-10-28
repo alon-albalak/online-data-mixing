@@ -341,6 +341,7 @@ def load_data_sampling_weights(neox_args):
         # load data sampling weights from checkpoint
         data_sampling_weights_path = os.path.join(neox_args.load, f"global_step{neox_args.iteration}", "data_sampling_weights.pt")
         if os.path.exists(data_sampling_weights_path):
+            print_rank_0(f"Loading data_sampling_weights from {data_sampling_weights_path}")
             data_sampling_weights = torch.load(data_sampling_weights_path)
         else:
             data_sampling_weights = None
@@ -353,6 +354,7 @@ def load_local_samples_seen_per_dataset(neox_args):
         # load data sampling weights from checkpoint
         local_samples_seen_per_dataset_path = os.path.join(neox_args.load, f"global_step{neox_args.iteration}", f"local_samples_seen_per_dataset_rank_{torch.distributed.get_rank()}.json")
         if os.path.exists(local_samples_seen_per_dataset_path):
+            print_rank_0(f"Loading local_samples_seen_per_dataset from {local_samples_seen_per_dataset_path}")
             with open(local_samples_seen_per_dataset_path, "r") as f:
                 local_samples_seen_per_dataset = json.load(f)
         else:
@@ -366,7 +368,7 @@ def load_global_samples_seen_per_dataset(neox_args):
     if neox_args.load is not None and neox_args.iteration > 0:
         # load data sampling weights from checkpoint
         for path in Path(os.path.join(os.path.join(neox_args.load, f"global_step{neox_args.iteration}"))).glob("local_samples_seen_per_dataset_rank_*"):
-            # print(f"Loading local_samples_seen_per_dataset from {path}")
+            print_rank_0(f"Loading local_samples_seen_per_dataset from {path}")
             with path.open() as f:
                 samples_seen = json.load(f)
             for k, v in samples_seen.items():

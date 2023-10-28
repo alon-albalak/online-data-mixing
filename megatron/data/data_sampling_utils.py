@@ -644,6 +644,7 @@ def get_data_sampling_weighter(
     """
     Returns a data sampling weighter based on the provided arguments.
     """
+    print_rank_0(f"Creating data sampling weighter with:\n\tdataset_names: {dataset_names}\n\tweights: {weights}\n\twarmup_steps: {warmup_steps}\n\tupdate_frequency: {update_frequency}\n\tupdate_method: {update_method}\n\tkwargs: {kwargs}")
     if update_method is None:
         assert(warmup_steps==0 and update_frequency==0), "Must provide update method if warmup steps or update frequency are provided."
         return BaseDataSamplingWeight(weights=weights)

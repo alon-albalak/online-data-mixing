@@ -284,7 +284,7 @@ def training_log(
                     use_wandb=neox_args.use_wandb,
                     tensorboard_writer=neox_args.tensorboard_writer,
                 )
-                percent = iterations / ( iteration * neox_args.train_batch_size )
+                percent = iterations / iteration
                 tb_wandb_log(
                     f"train/percent/{domain}",
                     percent,

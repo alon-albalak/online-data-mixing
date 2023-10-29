@@ -115,6 +115,7 @@ def pretrain(neox_args):
     print_rank_0("training ...")
 
     iteration = neox_args.iteration
+    data_sampling_weights = None
     if neox_args.do_train and neox_args.train_iters > 0:
         # edge case: save step 0 checkpoint if requested and we're starting from step 0
         if neox_args.save and 0 in neox_args.save_iters and iteration == 0:
@@ -151,7 +152,7 @@ def pretrain(neox_args):
                 )
         else:
             if neox_args.mixed_minibatches:
-                iteration = train_mixed_minibatch(
+                iteration, data_sampling_weights = train_mixed_minibatch(
                     neox_args=neox_args,
                     timers=timers,
                     model=model,
@@ -203,6 +204,7 @@ def pretrain(neox_args):
             model=model,
             optimizer=optimizer,
             lr_scheduler=lr_scheduler,
+            data_sampling_weights=data_sampling_weights,
         )
 
     if neox_args.do_test:
@@ -964,7 +966,13 @@ def train_mixed_minibatch(
         # iterate through datasets to correctly initialize the dataloaders
         for dataset_name, samples_seen in neox_args.local_samples_seen_per_dataset.items():
             local_batches = samples_seen / neox_args.train_micro_batch_size_per_gpu
-            assert(local_batches.is_integer()), f"Loaded samples seen per dataset is not a multiple of micro batch size: {samples_seen} / {neox_args.train_micro_batch_size_per_gpu} = {local_batches}"
+            if not local_batches.is_integer():
+                local_batches = math.ceil(local_batches)
+                print(
+                    f"Warning: Loaded samples seen per dataset on rank {torch.distributed.get_rank()} is not a multiple of micro batch size. "
+                    f"Samples seen / train_micro_batch_size_per_gpu: {samples_seen} / {neox_args.train_micro_batch_size_per_gpu}. "
+                    f"Rounding up to {local_batches}. "
+                    )
 
             batch_iterator = train_data_iterator[dataset_name]
             for _ in range(int(local_batches)):

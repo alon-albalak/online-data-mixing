@@ -51,7 +51,7 @@ from megatron.checkpointing import (
     load_global_samples_seen_per_dataset
 )
 from megatron.data.data_utils import build_train_valid_test_data_iterators
-from megatron.initialize import initialize_megatron
+from megatron.initialize import initialize_megatron, _set_random_seed
 from megatron.learning_rates import AnnealingLR
 from megatron.logging import tb_wandb_log, training_log
 from megatron.utils import (
@@ -703,10 +703,10 @@ def train_step_named_datasets_mixed_batch(neox_args, timers, data_iterator, mode
             else:
                 raise ValueError("Must be using deepspeed to run neox")
             timers("optimizer").stop()
+            batch_dataset_names.extend(names)
         reduced_loss = {
             "lm_loss": reduce_losses(losses).mean()
         }  # reduces losses across machines for logging
-        batch_dataset_names.extend(names)
 
     if neox_args.precision == "fp16" and model.optimizer.overflow:
         skipped_iter = 1
@@ -930,65 +930,64 @@ def train_mixed_minibatch(
     # Iterations.
     iteration = neox_args.iteration
 
-    # if using named train datasets, prepare dataloaders, dataiterators and dicts to track iterations and epochs
-    if neox_args.use_named_train_datasets:
-        neox_args.dataset_iterations = {name: 0 for name in train_data_iterator.keys()}
-        # if saving, need to specify number of iterations per device
-        if neox_args.save:
-            neox_args.local_samples_seen_per_dataset = {name: 0 for name in train_data_iterator.keys()}
-        train_dataloaders = {name: dataloader for name, dataloader in train_data_iterator.items()}
-        train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
-        neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
-        dataset_names = list(train_data_iterator.keys())
-        data_sampler_kwargs = {}
-        if neox_args.data_sampling_method == "smoothed_mean":
-            data_sampler_kwargs['smoothing_factor'] = neox_args.data_sampling_smoothing_factor
-        data_sampling_weights = get_data_sampling_weighter(
-            dataset_names=list(train_dataloaders.keys()),
-            weights=neox_args.train_data_weights,
-            warmup_steps=neox_args.data_sampling_warmup_steps,
-            update_frequency=neox_args.data_sampling_update_frequency,
-            update_method=neox_args.data_sampling_method,
-            **data_sampler_kwargs
-            )
-        
-        # if loading from checkpoint
-        if neox_args.load:
-            # get data sampling weights
-            data_sampling_weights = load_data_sampling_weights(neox_args)
+    assert(neox_args.use_named_train_datasets), "Mixed minibatch training requires named datasets"
 
-            # load local samples seen per dataset
-            neox_args.local_samples_seen_per_dataset = load_local_samples_seen_per_dataset(neox_args)
-            # iterate through datasets to correctly initialize the dataloaders
-            for dataset_name, samples_seen in neox_args.local_samples_seen_per_dataset.items():
-                local_batches = samples_seen / neox_args.train_micro_batch_size_per_gpu
-                assert(local_batches.is_integer()), f"Loaded samples seen per dataset is not a multiple of micro batch size: {samples_seen} / {neox_args.train_micro_batch_size_per_gpu} = {local_batches}"
+    # Set up data sampling variables
+    neox_args.dataset_iterations = {name: 0 for name in train_data_iterator.keys()}
+    train_dataloaders = {name: dataloader for name, dataloader in train_data_iterator.items()}
+    train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
+    neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
+    dataset_names = list(train_data_iterator.keys())
+    data_sampler_kwargs = {}
+    if neox_args.data_sampling_method == "smoothed_mean":
+        data_sampler_kwargs['smoothing_factor'] = neox_args.data_sampling_smoothing_factor
+    data_sampling_weights = get_data_sampling_weighter(
+        dataset_names=list(train_dataloaders.keys()),
+        weights=neox_args.train_data_weights,
+        warmup_steps=neox_args.data_sampling_warmup_steps,
+        update_frequency=neox_args.data_sampling_update_frequency,
+        update_method=neox_args.data_sampling_method,
+        **data_sampler_kwargs
+        )
+    
+    # if saving, need to specify number of iterations per device
+    if neox_args.save:
+        neox_args.local_samples_seen_per_dataset = {name: 0 for name in train_data_iterator.keys()}
+    
+    # if loading from checkpoint
+    if neox_args.load:
+        # get data sampling weights
+        data_sampling_weights = load_data_sampling_weights(neox_args)
 
-                batch_iterator = train_data_iterator[dataset_name]
-                for _ in range(int(local_batches)):
-                    try:
-                        data = next(batch_iterator)
-                    except:
-                        # reinitialize dataset
-                        train_dataloaders[batch_name].dataset.seed += 1
-                        train_dataloaders[batch_name].dataset._reinitialize(override_process_dataset=True)
-                        # update completed epochs
-                        neox_args.dataset_epochs[batch_name] = train_dataloaders[batch_name].dataset._completed_epochs
-                        # create iterator from dataloader
-                        train_data_iterator[batch_name] = iter(train_dataloaders[batch_name])
-                        # continue with new batch
-                        batch_iterator = train_data_iterator[batch_name]
-                        data = next(batch_iterator)
+        # load local samples seen per dataset
+        neox_args.local_samples_seen_per_dataset = load_local_samples_seen_per_dataset(neox_args)
+        # iterate through datasets to correctly initialize the dataloaders
+        for dataset_name, samples_seen in neox_args.local_samples_seen_per_dataset.items():
+            local_batches = samples_seen / neox_args.train_micro_batch_size_per_gpu
+            assert(local_batches.is_integer()), f"Loaded samples seen per dataset is not a multiple of micro batch size: {samples_seen} / {neox_args.train_micro_batch_size_per_gpu} = {local_batches}"
 
-            # update global iteration count
-            global_samples_seen_per_dataset = load_global_samples_seen_per_dataset(neox_args)
-            for dataset_name, samples_seen in global_samples_seen_per_dataset.items():
-                global_batches = samples_seen / neox_args.world_size / neox_args.train_micro_batch_size_per_gpu
-                neox_args.dataset_iterations[dataset_name] = global_batches
+            batch_iterator = train_data_iterator[dataset_name]
+            for _ in range(int(local_batches)):
+                try:
+                    data = next(batch_iterator)
+                except:
+                    # reinitialize dataset
+                    train_dataloaders[dataset_name].dataset.seed += 1
+                    train_dataloaders[dataset_name].dataset._reinitialize(override_process_dataset=True)
+                    # update completed epochs
+                    neox_args.dataset_epochs[dataset_name] = train_dataloaders[dataset_name].dataset._completed_epochs
+                    # create iterator from dataloader
+                    train_data_iterator[dataset_name] = iter(train_dataloaders[dataset_name])
+                    # continue with new batch
+                    batch_iterator = train_data_iterator[dataset_name]
+                    data = next(batch_iterator)
 
+        # update global iteration count
+        global_samples_seen_per_dataset = load_global_samples_seen_per_dataset(neox_args)
+        for dataset_name, samples_seen in global_samples_seen_per_dataset.items():
+            global_batches = samples_seen / neox_args.train_batch_size
+            neox_args.dataset_iterations[dataset_name] = global_batches
 
-    else:
-        data_sampling_weights = None
 
     timers("interval time").start()
     report_memory_flag = True
@@ -998,6 +997,144 @@ def train_mixed_minibatch(
 
     # to monitor if we've skipped many iterations in a row and trigger an early exit
     overflow_monitor = OverflowMonitor(optimizer)
+
+    # Data sampling warmup loop
+    if iteration < neox_args.data_sampling_warmup_steps:
+
+        # change dataset iterations to tensor to allow for distributed accumulation
+        neox_args.dataset_iterations = {name: torch.tensor(0.0).to(torch.cuda.current_device()) for name in train_data_iterator.keys()}
+
+        # get mixed_batch data loaders
+        neox_args.mixed_batches = True
+        neox_args.mixed_minibatches = False
+        timers("train/valid/test data iterators").start()
+        (
+            train_data_iterator,
+            valid_data_iterator,
+            _,
+            _,
+        ) = build_train_valid_test_data_iterators(neox_args=neox_args)
+        timers("train/valid/test data iterators").stop()
+
+        # iterate through warmup steps
+        while iteration < neox_args.data_sampling_warmup_steps:
+            batch_dataset_names, loss_dict, skipped_iter = train_step_named_datasets_mixed_batch(
+                neox_args=neox_args,
+                timers=timers,
+                data_iterator=train_data_iterator,
+                model=model,
+                optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
+            )
+            iteration += 1
+
+            for name in batch_dataset_names:
+                neox_args.dataset_iterations[name.replace("train_","")] += 1/neox_args.train_batch_size
+                neox_args.local_samples_seen_per_dataset[name.replace("train_","")] += 1
+
+            overflow_monitor.check(skipped_iter)  # check for repeated overflow
+            if neox_args.log_gradient_noise_scale:  # log noise scale if applicable
+                noise_scale_logger.update()
+
+            # get learning rate (if present) - if doing soft prompt tuning + pipe parallel, you
+            # may have no tunable parameters on a specific rank
+            if optimizer.param_groups:
+                lr = optimizer.param_groups[0].get("lr", 0)
+            else:
+                lr = 0
+
+            # Logging.
+            report_memory_flag = training_log(
+                neox_args=neox_args,
+                timers=timers,
+                loss_dict=loss_dict,
+                total_loss_dict=total_loss_dict,
+                learning_rate=lr,
+                iteration=iteration,
+                loss_scale=optimizer.cur_scale if neox_args.precision == "fp16" else None,
+                report_memory_flag=report_memory_flag,
+                skipped_iter=skipped_iter,
+                model=model,
+                optimizer=optimizer,
+                noise_scale_logger=noise_scale_logger,
+                data_sampling_weights=data_sampling_weights
+            )
+
+            # Checkpointing
+            if neox_args.save and iteration in neox_args.save_iters:
+                save_checkpoint(
+                    neox_args=neox_args,
+                    iteration=iteration,
+                    model=model,
+                    optimizer=optimizer,
+                    lr_scheduler=lr_scheduler,
+                )
+
+            # Evaluation
+            if (
+                neox_args.eval_interval
+                and iteration % neox_args.eval_interval == 0
+                and neox_args.do_valid
+            ):
+                prefix = "iteration {}".format(iteration)
+                evaluate_named_datasets_and_print_results(
+                    neox_args=neox_args,
+                    prefix=prefix,
+                    forward_step_func=forward_step,
+                    data_iterators=valid_data_iterator,
+                    model=model,
+                    iteration=iteration,
+                    verbose=False,
+                    timers=timers,
+                )
+
+        # reset seeds, dataloaders, and iterators
+        _set_random_seed(neox_args.seed)
+        neox_args.mixed_batches = False
+        neox_args.mixed_minibatches = True
+        timers("train/valid/test data iterators").start()
+        (
+            train_data_iterator,
+            valid_data_iterator,
+            _,
+            _,
+        ) = build_train_valid_test_data_iterators(neox_args=neox_args)
+        train_dataloaders = {name: dataloader for name, dataloader in train_data_iterator.items()}
+        train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
+        neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
+        timers("train/valid/test data iterators").stop()
+
+        # gather dataset_iterations across processes
+        if torch.distributed.is_initialized():
+            for name in neox_args.dataset_iterations.keys():
+                torch.distributed.all_reduce(neox_args.dataset_iterations[name])
+                neox_args.dataset_iterations[name] = int(math.ceil(neox_args.dataset_iterations[name].tolist()))
+
+
+        # iterate through datasets to correctly initialize the dataloaders
+        for dataset_name, samples_seen in neox_args.local_samples_seen_per_dataset.items():
+            local_batches = samples_seen // neox_args.train_micro_batch_size_per_gpu
+            
+            batch_iterator = train_data_iterator[dataset_name]
+            for _ in range(int(local_batches)):
+                try:
+                    data = next(batch_iterator)
+                except:
+                    # reinitialize dataset
+                    train_dataloaders[dataset_name].dataset.seed += 1
+                    train_dataloaders[dataset_name].dataset._reinitialize(override_process_dataset=True)
+                    # update completed epochs
+                    neox_args.dataset_epochs[dataset_name] = train_dataloaders[dataset_name].dataset._completed_epochs
+                    # create iterator from dataloader
+                    train_data_iterator[dataset_name] = iter(train_dataloaders[dataset_name])
+                    # continue with new batch
+                    batch_iterator = train_data_iterator[dataset_name]
+                    data = next(batch_iterator)
+
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+
+    # Main training loop
     while iteration < neox_args.train_iters:
 
 
@@ -1226,7 +1363,7 @@ def train_named_datasets_mixed_batch_validation_reward(
         iteration += 1
 
         for name in batch_dataset_names:
-            neox_args.dataset_iterations[name.replace("train_","")] += 1
+            neox_args.dataset_iterations[name.replace("train_","")] += 1 / neox_args.train_batch_size
 
         overflow_monitor.check(skipped_iter)  # check for repeated overflow
         if neox_args.log_gradient_noise_scale:  # log noise scale if applicable

@@ -1308,7 +1308,7 @@ def train_mixed_minibatch(
         if torch.distributed.is_initialized():
             torch.distributed.barrier()
 
-    return iteration
+    return iteration, data_sampling_weights
 
 def train_named_datasets_mixed_batch_validation_reward(
     dataset_names,

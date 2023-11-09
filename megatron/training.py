@@ -1017,8 +1017,8 @@ def train_mixed_minibatch(
         neox_args.mixed_minibatches = False
         timers("train/valid/test data iterators").start()
         (
-            train_data_iterator,
-            valid_data_iterator,
+            warmup_train_data_iterator,
+            _,
             _,
             _,
         ) = build_train_valid_test_data_iterators(neox_args=neox_args)
@@ -1029,7 +1029,7 @@ def train_mixed_minibatch(
             batch_dataset_names, loss_dict, skipped_iter = train_step_named_datasets_mixed_batch(
                 neox_args=neox_args,
                 timers=timers,
-                data_iterator=train_data_iterator,
+                data_iterator=warmup_train_data_iterator,
                 model=model,
                 optimizer=optimizer,
                 lr_scheduler=lr_scheduler,
@@ -1096,24 +1096,27 @@ def train_mixed_minibatch(
                     timers=timers,
                 )
 
+        del warmup_train_data_iterator
+
         # reset seeds, dataloaders, and iterators
         _set_random_seed(neox_args.seed)
         neox_args.mixed_batches = False
         neox_args.mixed_minibatches = True
-        timers("train/valid/test data iterators").start()
-        (
-            train_data_iterator,
-            valid_data_iterator,
-            _,
-            _,
-        ) = build_train_valid_test_data_iterators(neox_args=neox_args)
-        train_dataloaders = {name: dataloader for name, dataloader in train_data_iterator.items()}
-        train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
-        neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
-        timers("train/valid/test data iterators").stop()
+        # timers("train/valid/test data iterators").start()
+        # (
+        #     train_data_iterator,
+        #     _,
+        #     _,
+        #     _,
+        # ) = build_train_valid_test_data_iterators(neox_args=neox_args)
+        # train_dataloaders = {name: dataloader for name, dataloader in train_data_iterator.items()}
+        # train_data_iterator = {name: iter(dataloader) for name, dataloader in train_dataloaders.items()}
+        # neox_args.dataset_epochs = {name: dataloader.dataset._completed_epochs for name, dataloader in train_dataloaders.items()}
+        # timers("train/valid/test data iterators").stop()
 
         # gather dataset_iterations across processes
         if torch.distributed.is_initialized():
+            torch.distributed.barrier()
             for name in neox_args.dataset_iterations.keys():
                 torch.distributed.all_reduce(neox_args.dataset_iterations[name])
                 neox_args.dataset_iterations[name] = int(math.ceil(neox_args.dataset_iterations[name].tolist()))
@@ -1138,6 +1141,8 @@ def train_mixed_minibatch(
                     # continue with new batch
                     batch_iterator = train_data_iterator[dataset_name]
                     data = next(batch_iterator)
+
+        torch.cuda.empty_cache()
 
         if torch.distributed.is_initialized():
             torch.distributed.barrier()

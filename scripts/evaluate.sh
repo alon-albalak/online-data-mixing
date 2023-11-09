@@ -1,7 +1,8 @@
 MODEL_CONFIG=$1
 EVAL_CONFIG=$2
-NUM_FEWSHOT=${3:-0}
-GPU=${4:-0}
+STEP=$3
+NUM_FEWSHOT=${4:-0}
+GPU=${5:-0}
 
 # Can't use perplexity-based evaluation tasks with in-context examples
 if [ ${NUM_FEWSHOT} -eq 0 ]; then
@@ -21,7 +22,7 @@ fi
 #         "load": "outputs/160m_doremi_280_seed42",
 #         "eval_results_prefix": "outputs/160m_doremi_280_seed42",
 # CONFIGS="outputs/160m_doremi_280_seed42/global_step100000/configs/160m_doremi_280_seed42.yml alon_configs/models/eval_160m_1gpu.yml"
-python3 tools/create_eval_config.py --config_path ${MODEL_CONFIG} --num_fewshot ${NUM_FEWSHOT}
+python3 tools/create_eval_config.py --config_path ${MODEL_CONFIG} --num_fewshot ${NUM_FEWSHOT} --iteration ${STEP}
 
 # if not using num_fewshot, then you can just use the following:
 if [ ${NUM_FEWSHOT} -eq 0 ]; then

@@ -14,6 +14,7 @@ def get_step_from_path(path):
 parser = argparse.ArgumentParser()
 parser.add_argument("--config_path", type=str, required=True, help="Path to the config file to modify.")
 parser.add_argument("--num_fewshot", type=int, required=False, default=0, help="Flag fo the number of fewshot in-context examples to use. 0 if none.")
+parser.add_argument("--iteration", type=int, required=False, default=None, help="Iteration of the model to evaluate. If not specified, will use the latest checkpoint.")
 
 args = parser.parse_args()
 model_step = get_step_from_path(args.config_path)
@@ -31,6 +32,10 @@ config['load'] = config['save']
 config['eval_results_prefix'] = eval_results_prefix
 
 save_path = args.config_path.replace(".yml", "_eval.yml")
+
+# if using iteration
+if args.iteration is not None:
+    config["iteration"] = args.iteration
 
 # if using num_fewshot
 if args.num_fewshot > 0:

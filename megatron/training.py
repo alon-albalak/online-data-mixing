@@ -974,21 +974,40 @@ def train_mixed_minibatch(
                     f"Rounding up to {local_batches}. "
                     )
 
-            batch_iterator = train_data_iterator[dataset_name]
-            for _ in range(int(local_batches)):
-                try:
-                    data = next(batch_iterator)
-                except:
-                    # reinitialize dataset
-                    train_dataloaders[dataset_name].dataset.seed += 1
-                    train_dataloaders[dataset_name].dataset._reinitialize(override_process_dataset=True)
-                    # update completed epochs
-                    neox_args.dataset_epochs[dataset_name] = train_dataloaders[dataset_name].dataset._completed_epochs
-                    # create iterator from dataloader
-                    train_data_iterator[dataset_name] = iter(train_dataloaders[dataset_name])
-                    # continue with new batch
-                    batch_iterator = train_data_iterator[dataset_name]
-                    data = next(batch_iterator)
+            # calculate how many epochs have been completed
+            local_completed_epochs = int(local_batches // len(train_dataloaders[dataset_name]))
+            # calculate how many batches need to be skipped in the current epoch
+            local_start_iter = int(local_batches % len(train_dataloaders[dataset_name]))
+
+            print(f"RANK {torch.distributed.get_rank()} -- Skipping {local_start_iter} batches in epoch {local_completed_epochs} of {dataset_name}")
+
+            if local_completed_epochs > 0:
+                train_dataloaders[dataset_name].dataset.seed += local_completed_epochs
+                train_dataloaders[dataset_name].dataset._reinitialize(override_process_dataset=True)
+                neox_args.dataset_epochs[dataset_name] = train_dataloaders[dataset_name].dataset._completed_epochs
+                train_dataloaders[dataset_name].dataset._completed_epochs = local_completed_epochs
+
+            train_dataloaders[dataset_name].batch_sampler.start_iter = local_start_iter
+            train_data_iterator[dataset_name] = iter(train_dataloaders[dataset_name])
+
+            if torch.distributed.is_initialized():
+                torch.distributed.barrier()
+
+            # batch_iterator = train_data_iterator[dataset_name]
+            # for _ in range(int(local_batches)):
+            #     try:
+            #         data = next(batch_iterator)
+            #     except:
+            #         # reinitialize dataset
+            #         train_dataloaders[dataset_name].dataset.seed += 1
+            #         train_dataloaders[dataset_name].dataset._reinitialize(override_process_dataset=True)
+            #         # update completed epochs
+            #         neox_args.dataset_epochs[dataset_name] = train_dataloaders[dataset_name].dataset._completed_epochs
+            #         # create iterator from dataloader
+            #         train_data_iterator[dataset_name] = iter(train_dataloaders[dataset_name])
+            #         # continue with new batch
+            #         batch_iterator = train_data_iterator[dataset_name]
+            #         data = next(batch_iterator)
 
         # update global iteration count
         global_samples_seen_per_dataset = load_global_samples_seen_per_dataset(neox_args)

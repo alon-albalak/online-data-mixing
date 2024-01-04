@@ -1,6 +1,35 @@
-[![GitHub issues](https://img.shields.io/github/issues/EleutherAI/gpt-neox)](https://github.com/EleutherAI/gpt-neox/issues)
+<!--[![GitHub issues](https://img.shields.io/github/issues/EleutherAI/gpt-neox)](https://github.com/EleutherAI/gpt-neox/issues)
 [<img src="https://raw.githubusercontent.com/wandb/assets/main/wandb-github-badge-28.svg" alt="Weights & Biases monitoring" height=20>](https://wandb.ai/eleutherai/neox)
+-->
 
+# ODM - Online Data Mixing (Under development)
+
+This is the official repository for the methods provided in [Efficient Online Data Mixing For Language Model Pre-Training](https://arxiv.org/abs/2312.02406).
+
+## Abstract
+The data used to pretrain large language models has a decisive impact on a model's downstream performance, which has led to a large body of work on data selection methods that aim to automatically determine the most suitable data to use for pretraining. Existing data selection methods suffer from slow and computationally expensive processes, a problem amplified by the increasing size of models and of pretraining datasets. Data mixing, on the other hand, reduces the complexity of data selection by grouping data points together and determining sampling probabilities across entire groups. However, data mixing proportions are typically fixed before training and therefore cannot adapt to changing training dynamics. To address these limitations, we develop an efficient algorithm for Online Data Mixing (ODM) that combines elements from both data selection and data mixing. Based on multi-armed bandit algorithms, our online approach optimizes the data mixing proportions during training. Remarkably, our method trains a model that reaches the final perplexity of the next best method with 19\% fewer training iterations, and improves performance on the 5-shot MMLU benchmark by 1.9% relative accuracy, while adding negligible wall-clock time during pretraining.
+
+## Overview
+This repository contains code for developing efficient online data mixing methods. Specifically, we have code 
+
+The majority of the functionality is found in the [data_sampling_utils.py](megatron/data/data_sampling_utils.py) file. Specifically, the [SmoothedMeanWeightUpdater](https://github.com/alon-albalak/online-data-mixing/blob/aca0acbad2c47ddcdd782f39309630b464ec6f12/megatron/data/data_sampling_utils.py#L455) class is the data mixing implementation described in the paper, used to store and update mixture weights.
+
+***Note***: This repository is under active development as is subject to change.
+
+## Setup
+This repository is not setup to be directly run as-is. This is in part because it was developed for the now defunct Pile dataset. However, the core functions can be replicated with minimal effort.
+
+If you already have access to the Pile dataset, you can use the code from this repo directly. First, you must follow the original gpt-neox README in the section below titled "Original GPT-NeoX README". Next, 
+
+
+## To Do:
+- [ ] Isolate the functions specific to ODM so that it can be packaged with pip
+
+## Acknowledgements
+
+This work is built on the GPT-NeoX framework developed by [EleutherAI](https://www.eleuther.ai/) and the original repository can be found at [https://github.com/EleutherAI/gpt-neox](https://github.com/EleutherAI/gpt-neox)
+
+<details><summary>Original GPT-NeoX README</summary>
 # GPT-NeoX
 
 This repository records [EleutherAI](https://www.eleuther.ai)'s library for training large-scale language models on GPUs. Our current framework is based on NVIDIA's [Megatron Language Model](https://github.com/NVIDIA/Megatron-LM) and has been augmented with techniques from [DeepSpeed](https://www.deepspeed.ai) as well as some novel optimizations. We aim to make this repo a centralized and accessible place to gather techniques for training large-scale autoregressive language models, and accelerate research into large-scale training.
@@ -402,3 +431,18 @@ The following publications by other research groups use this library:
 ## Acknowledgements
 
 We run our experiments on a Kubernetes cluster generously provided by [CoreWeave](https://coreweave.com/) and a SLURM cluster provided by [Stability AI](https://stability.ai).
+
+</details>
+
+## How to Cite
+If you extend or use this work, please cite the paper where it was first introduced:
+```
+@misc{albalak2023efficient,
+      title={Efficient Online Data Mixing For Language Model Pre-Training}, 
+      author={Alon Albalak and Liangming Pan and Colin Raffel and William Yang Wang},
+      year={2023},
+      eprint={2312.02406},
+      archivePrefix={arXiv},
+      primaryClass={cs.CL}
+}
+```

@@ -10,7 +10,7 @@ This is the official repository for the methods provided in [Efficient Online Da
 The data used to pretrain large language models has a decisive impact on a model's downstream performance, which has led to a large body of work on data selection methods that aim to automatically determine the most suitable data to use for pretraining. Existing data selection methods suffer from slow and computationally expensive processes, a problem amplified by the increasing size of models and of pretraining datasets. Data mixing, on the other hand, reduces the complexity of data selection by grouping data points together and determining sampling probabilities across entire groups. However, data mixing proportions are typically fixed before training and therefore cannot adapt to changing training dynamics. To address these limitations, we develop an efficient algorithm for Online Data Mixing (ODM) that combines elements from both data selection and data mixing. Based on multi-armed bandit algorithms, our online approach optimizes the data mixing proportions during training. Remarkably, our method trains a model that reaches the final perplexity of the next best method with 19\% fewer training iterations, and improves performance on the 5-shot MMLU benchmark by 1.9% relative accuracy, while adding negligible wall-clock time during pretraining.
 
 ## Overview
-This repository contains code for developing efficient online data mixing methods. Specifically, we have code 
+This repository contains code for developing efficient online data mixing methods.
 
 The majority of the functionality is found in the [data_sampling_utils.py](megatron/data/data_sampling_utils.py) file. Specifically, the [SmoothedMeanWeightUpdater](https://github.com/alon-albalak/online-data-mixing/blob/aca0acbad2c47ddcdd782f39309630b464ec6f12/megatron/data/data_sampling_utils.py#L455) class is the data mixing implementation described in the paper, used to store and update mixture weights.
 
@@ -19,8 +19,13 @@ The majority of the functionality is found in the [data_sampling_utils.py](megat
 ## Setup
 This repository is not setup to be directly run as-is. This is in part because it was developed for the now defunct Pile dataset. However, the core functions can be replicated with minimal effort.
 
-If you already have access to the Pile dataset, you can use the code from this repo directly. First, you must follow the original gpt-neox README in the section below titled "Original GPT-NeoX README". Next, 
+If you already have access to the Pile dataset, you can use the code from this repo directly. To setup the environment, use:
+```bash
+bash alon_setup.sh
+```
 
+
+For more details on setup and usage, you can follow the original gpt-neox README in the section below titled "Original GPT-NeoX README".
 
 ## To Do:
 - [ ] Isolate the functions specific to ODM so that it can be packaged with pip

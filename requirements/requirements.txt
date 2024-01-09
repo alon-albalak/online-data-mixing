@@ -16,3 +16,4 @@ wandb==0.10.28
 protobuf==3.20.*
 best-download
 urllib3~=1.26.16
+datasets==2.16.0
